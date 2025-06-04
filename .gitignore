@@ -1,0 +1,31 @@
+# Python 编译文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虚拟环境目录
+venv/
+env/
+.env
+
+# 依赖库
+requirements.txt
+Pipfile.lock
+
+# 日志目录
+logs/
+
+# 向量存储目录
+vector_store/
+
+# 输出目录
+output/
+
+# 操作系统相关文件
+.DS_Store
+Thumbs.db
+
+# 本地测试相关目录
+test_documents/
+mytest/

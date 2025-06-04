@@ -1,0 +1,231 @@
+"""
+向量存储工具
+Vector store utilities for RAG system
+"""
+
+from typing import List, Optional, Tuple
+from langchain.schema import Document
+from langchain_community.vectorstores import Chroma
+from langchain.embeddings.base import Embeddings
+from loguru import logger
+import os
+import shutil
+from config.settings import settings
+
+class VectorStoreManager:
+    """向量存储管理器"""
+    
+    def __init__(self, embeddings: Embeddings, persist_directory: Optional[str] = None):
+        """
+        初始化向量存储管理器
+        
+        Args:
+            embeddings: 嵌入模型
+            persist_directory: 持久化目录
+        """
+        self.embeddings = embeddings
+        self.persist_directory = persist_directory or settings.vector_store_path
+        self.vector_store: Optional[Chroma] = None
+        
+        # 确保目录存在
+        os.makedirs(self.persist_directory, exist_ok=True)
+    
+    def create_vector_store(self, documents: List[Document], collection_name: str = "bidding_docs") -> Chroma:
+        """
+        创建向量存储
+        
+        Args:
+            documents: 文档列表
+            collection_name: 集合名称
+            
+        Returns:
+            Chroma: 向量存储实例
+        """
+        try:
+            logger.info(f"开始创建向量存储，文档数量: {len(documents)}")
+            
+            # 创建向量存储
+            self.vector_store = Chroma.from_documents(
+                documents=documents,
+                embedding=self.embeddings,
+                persist_directory=self.persist_directory,
+                collection_name=collection_name
+            )
+            
+            # 持久化
+            self.vector_store.persist()
+            
+            logger.info(f"向量存储创建成功，集合名称: {collection_name}")
+            return self.vector_store
+            
+        except Exception as e:
+            logger.error(f"创建向量存储失败: {e}")
+            raise
+    
+    def load_vector_store(self, collection_name: str = "bidding_docs") -> Optional[Chroma]:
+        """
+        加载现有的向量存储
+        
+        Args:
+            collection_name: 集合名称
+            
+        Returns:
+            Optional[Chroma]: 向量存储实例
+        """
+        try:
+            if os.path.exists(self.persist_directory):
+                self.vector_store = Chroma(
+                    persist_directory=self.persist_directory,
+                    embedding_function=self.embeddings,
+                    collection_name=collection_name
+                )
+                logger.info(f"向量存储加载成功，集合名称: {collection_name}")
+                return self.vector_store
+            else:
+                logger.warning(f"向量存储目录不存在: {self.persist_directory}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"加载向量存储失败: {e}")
+            return None
+    
+    def add_documents(self, documents: List[Document]) -> None:
+        """
+        向现有向量存储添加文档
+        
+        Args:
+            documents: 要添加的文档列表
+        """
+        if self.vector_store is None:
+            raise ValueError("向量存储未初始化")
+        
+        try:
+            self.vector_store.add_documents(documents)
+            self.vector_store.persist()
+            logger.info(f"成功添加{len(documents)}个文档到向量存储")
+            
+        except Exception as e:
+            logger.error(f"添加文档到向量存储失败: {e}")
+            raise
+    
+    def similarity_search(self, query: str, k: int = None) -> List[Document]:
+        """
+        相似度搜索
+        
+        Args:
+            query: 查询文本
+            k: 返回文档数量
+            
+        Returns:
+            List[Document]: 相似文档列表
+        """
+        if self.vector_store is None:
+            raise ValueError("向量存储未初始化")
+        
+        if k is None:
+            k = settings.retrieval_k
+        
+        try:
+            results = self.vector_store.similarity_search(query, k=k)
+            logger.debug(f"相似度搜索完成，查询: {query[:50]}..., 返回{len(results)}个结果")
+            return results
+            
+        except Exception as e:
+            logger.error(f"相似度搜索失败: {e}")
+            raise
+    
+    def similarity_search_with_score(self, query: str, k: int = None) -> List[Tuple[Document, float]]:
+        """
+        带分数的相似度搜索
+        
+        Args:
+            query: 查询文本
+            k: 返回文档数量
+            
+        Returns:
+            List[Tuple[Document, float]]: (文档, 相似度分数)列表
+        """
+        if self.vector_store is None:
+            raise ValueError("向量存储未初始化")
+        
+        if k is None:
+            k = settings.retrieval_k
+        
+        try:
+            results = self.vector_store.similarity_search_with_score(query, k=k)
+            # 过滤低相似度结果
+            filtered_results = [
+                (doc, score) for doc, score in results 
+                if score >= settings.similarity_threshold
+            ]
+            
+            logger.debug(f"带分数相似度搜索完成，查询: {query[:50]}..., 返回{len(filtered_results)}个结果")
+            return filtered_results
+            
+        except Exception as e:
+            logger.error(f"带分数相似度搜索失败: {e}")
+            raise
+    
+    def create_retriever(self, search_type: str = "similarity", search_kwargs: Optional[dict] = None):
+        """
+        创建检索器
+        
+        Args:
+            search_type: 搜索类型
+            search_kwargs: 搜索参数
+            
+        Returns:
+            检索器实例
+        """
+        if self.vector_store is None:
+            raise ValueError("向量存储未初始化")
+        
+        if search_kwargs is None:
+            search_kwargs = {"k": settings.retrieval_k}
+        
+        try:
+            retriever = self.vector_store.as_retriever(
+                search_type=search_type,
+                search_kwargs=search_kwargs
+            )
+            logger.info(f"检索器创建成功，搜索类型: {search_type}")
+            return retriever
+            
+        except Exception as e:
+            logger.error(f"创建检索器失败: {e}")
+            raise
+    
+    def clear_vector_store(self) -> None:
+        """清空向量存储"""
+        try:
+            if os.path.exists(self.persist_directory):
+                shutil.rmtree(self.persist_directory)
+                os.makedirs(self.persist_directory, exist_ok=True)
+                logger.info("向量存储已清空")
+            
+            self.vector_store = None
+            
+        except Exception as e:
+            logger.error(f"清空向量存储失败: {e}")
+            raise
+    
+    def get_collection_info(self) -> dict:
+        """
+        获取集合信息
+        
+        Returns:
+            dict: 集合信息
+        """
+        if self.vector_store is None:
+            return {"status": "未初始化"}
+        
+        try:
+            collection = self.vector_store._collection
+            return {
+                "name": collection.name,
+                "count": collection.count(),
+                "status": "已初始化"
+            }
+        except Exception as e:
+            logger.error(f"获取集合信息失败: {e}")
+            return {"status": "错误", "error": str(e)}
