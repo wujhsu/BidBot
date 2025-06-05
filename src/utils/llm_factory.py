@@ -4,8 +4,8 @@ Factory for creating LLM and embedding models
 """
 
 from typing import Optional, Any
-from langchain.llms.base import LLM
-from langchain.embeddings.base import Embeddings
+from langchain_core.language_models.base import BaseLanguageModel
+from langchain_core.embeddings import Embeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.llms import Tongyi
 from langchain_community.embeddings import DashScopeEmbeddings
@@ -135,10 +135,10 @@ class LLMFactory:
     def test_connection(provider: Optional[str] = None) -> bool:
         """
         测试LLM连接
-        
+
         Args:
             provider: LLM提供商
-            
+
         Returns:
             bool: 连接是否成功
         """
@@ -153,6 +153,32 @@ class LLMFactory:
             return True
         except Exception as e:
             logger.error(f"LLM连接测试失败: {provider}, 错误: {e}")
+            return False
+
+    @staticmethod
+    def test_embeddings(provider: Optional[str] = None) -> bool:
+        """
+        测试嵌入模型连接
+
+        Args:
+            provider: 嵌入模型提供商
+
+        Returns:
+            bool: 连接是否成功
+        """
+        try:
+            embeddings = LLMFactory.create_embeddings(provider)
+            # 简单的测试调用
+            test_text = ["测试嵌入模型连接"]
+            result = embeddings.embed_documents(test_text)
+            if result and len(result) > 0:
+                logger.info(f"嵌入模型连接测试成功: {provider}")
+                return True
+            else:
+                logger.error(f"嵌入模型返回空结果: {provider}")
+                return False
+        except Exception as e:
+            logger.error(f"嵌入模型连接测试失败: {provider}, 错误: {e}")
             return False
     
     @staticmethod

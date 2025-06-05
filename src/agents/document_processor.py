@@ -5,7 +5,7 @@ Document preprocessing node for the Langgraph workflow
 
 from typing import Dict, Any
 from loguru import logger
-from src.models.data_models import GraphState, BiddingAnalysisResult
+from src.models.data_models import GraphStateModel, BiddingAnalysisResult
 from src.utils.document_loader import DocumentLoader
 from src.utils.vector_store import VectorStoreManager
 from src.utils.llm_factory import LLMFactory
@@ -24,15 +24,15 @@ class DocumentProcessor:
         self.embeddings = LLMFactory.create_embeddings()
         self.vector_store_manager = VectorStoreManager(self.embeddings)
 
-    def process_document(self, state: GraphState) -> GraphState:
+    def process_document(self, state: GraphStateModel) -> GraphStateModel:
         """
         处理文档：加载、分割、向量化
-        
+
         Args:
             state: 图状态
-            
+
         Returns:
-            GraphState: 更新后的状态
+            GraphStateModel: 更新后的状态
         """
         try:
             logger.info(f"开始处理文档: {state.document_path}")
@@ -52,12 +52,22 @@ class DocumentProcessor:
             state.document_content = full_text
             state.chunks = [doc.page_content for doc in documents]
             
-            # 创建向量存储
-            collection_name = f"doc_{hash(state.document_path) % 10000}"
-            vector_store = self.vector_store_manager.create_vector_store(
-                documents, 
-                collection_name=collection_name
-            )
+            # 创建向量存储（根据配置决定是否隔离）
+            if settings.clear_vector_store_on_new_document:
+                # 使用隔离模式，确保新文档不受历史数据影响
+                vector_store = self.vector_store_manager.create_isolated_vector_store(
+                    documents,
+                    state.document_path
+                )
+                logger.info("使用隔离模式创建向量存储，历史数据已清空")
+            else:
+                # 使用传统模式，可能存在历史数据交叉污染
+                collection_name = f"doc_{hash(state.document_path) % 10000}"
+                vector_store = self.vector_store_manager.create_vector_store(
+                    documents,
+                    collection_name=collection_name
+                )
+                logger.warning("使用传统模式创建向量存储，可能存在历史数据交叉污染风险")
             state.vector_store = vector_store
             
             # 初始化分析结果
@@ -77,15 +87,15 @@ class DocumentProcessor:
         
         return state
     
-    def validate_document(self, state: GraphState) -> GraphState:
+    def validate_document(self, state: GraphStateModel) -> GraphStateModel:
         """
         验证文档内容
-        
+
         Args:
             state: 图状态
-            
+
         Returns:
-            GraphState: 更新后的状态
+            GraphStateModel: 更新后的状态
         """
         try:
             if not state.document_content:
@@ -126,15 +136,15 @@ class DocumentProcessor:
         
         return state
     
-    def extract_document_structure(self, state: GraphState) -> GraphState:
+    def extract_document_structure(self, state: GraphStateModel) -> GraphStateModel:
         """
         提取文档结构信息
-        
+
         Args:
             state: 图状态
-            
+
         Returns:
-            GraphState: 更新后的状态
+            GraphStateModel: 更新后的状态
         """
         try:
             logger.info("开始提取文档结构")
@@ -185,8 +195,8 @@ def create_document_processor_node():
     
     def document_processor_node(state: Dict[str, Any]) -> Dict[str, Any]:
         """文档预处理节点函数"""
-        # 转换为GraphState对象
-        graph_state = GraphState(**state)
+        # 转换为GraphStateModel对象
+        graph_state = GraphStateModel(**state)
         
         # 执行文档处理流程
         graph_state = processor.process_document(graph_state)
@@ -196,6 +206,6 @@ def create_document_processor_node():
             graph_state = processor.extract_document_structure(graph_state)
         
         # 转换回字典格式
-        return graph_state.dict()
+        return graph_state.model_dump()
     
     return document_processor_node

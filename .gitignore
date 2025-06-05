@@ -10,7 +10,7 @@ env/
 .env
 
 # 依赖库
-requirements.txt
+# requirements.txt
 Pipfile.lock
 
 # 日志目录
@@ -29,3 +29,6 @@ Thumbs.db
 # 本地测试相关目录
 test_documents/
 mytest/
+
+
+graph.png

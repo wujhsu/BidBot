@@ -76,6 +76,12 @@ class Settings(BaseSettings):
         default=0.7,
         description="相似度阈值"
     )
+
+    # 向量库隔离配置
+    clear_vector_store_on_new_document: bool = Field(
+        default=True,
+        description="处理新文档时是否清空历史向量数据（推荐开启以避免交叉污染）"
+    )
     
     # 输出配置
     output_dir: str = Field(

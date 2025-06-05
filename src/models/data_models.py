@@ -3,7 +3,7 @@
 Data models for the Intelligent Bidding Assistant
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, TypedDict
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -86,8 +86,19 @@ class BiddingAnalysisResult(BaseModel):
     other_information: OtherInformation = Field(default_factory=OtherInformation, description="其他重要信息")
     processing_notes: List[str] = Field(default_factory=list, description="处理说明")
 
-class GraphState(BaseModel):
+class GraphState(TypedDict):
     """Langgraph状态模型"""
+    document_path: str
+    document_content: Optional[str]
+    chunks: List[str]
+    vector_store: Optional[Any]
+    analysis_result: BiddingAnalysisResult
+    current_step: str
+    error_messages: List[str]
+    retry_count: int
+
+class GraphStateModel(BaseModel):
+    """Pydantic版本的GraphState，用于数据验证和转换"""
     document_path: str = Field(description="文档路径")
     document_content: Optional[str] = Field(None, description="文档内容")
     chunks: List[str] = Field(default_factory=list, description="文档分块")
@@ -96,6 +107,6 @@ class GraphState(BaseModel):
     current_step: str = Field(default="start", description="当前处理步骤")
     error_messages: List[str] = Field(default_factory=list, description="错误信息")
     retry_count: int = Field(default=0, description="重试次数")
-    
+
     class Config:
         arbitrary_types_allowed = True

@@ -5,8 +5,8 @@ Other important information extraction node for the Langgraph workflow
 
 from typing import Dict, Any, List
 from loguru import logger
-from langchain.prompts import PromptTemplate
-from src.models.data_models import GraphState, ExtractedField, DocumentSource
+from langchain_core.prompts import PromptTemplate
+from src.models.data_models import GraphStateModel, ExtractedField, DocumentSource
 from src.utils.llm_factory import LLMFactory
 import json
 import re
@@ -116,15 +116,15 @@ class OtherInfoExtractor:
             template=template
         )
     
-    def extract_contract_info(self, state: GraphState) -> GraphState:
+    def extract_contract_info(self, state: GraphStateModel) -> GraphStateModel:
         """
         提取合同相关信息
-        
+
         Args:
             state: 图状态
-            
+
         Returns:
-            GraphState: 更新后的状态
+            GraphStateModel: 更新后的状态
         """
         try:
             logger.info("开始提取合同相关信息")
@@ -171,15 +171,15 @@ class OtherInfoExtractor:
         
         return state
     
-    def identify_risks(self, state: GraphState) -> GraphState:
+    def identify_risks(self, state: GraphStateModel) -> GraphStateModel:
         """
         识别潜在风险
-        
+
         Args:
             state: 图状态
-            
+
         Returns:
-            GraphState: 更新后的状态
+            GraphStateModel: 更新后的状态
         """
         try:
             logger.info("开始识别潜在风险")
@@ -243,7 +243,7 @@ class OtherInfoExtractor:
             logger.error(f"JSON解析失败: {e}")
             return {}
     
-    def _update_contract_info(self, state: GraphState, data: dict) -> None:
+    def _update_contract_info(self, state: GraphStateModel, data: dict) -> None:
         """更新合同信息"""
         other_info = state.analysis_result.other_information
         
@@ -274,7 +274,7 @@ class OtherInfoExtractor:
                     confidence=field_data.get('confidence', 0.5)
                 ))
     
-    def _update_risk_warnings(self, state: GraphState, risk_warnings: List[dict]) -> None:
+    def _update_risk_warnings(self, state: GraphStateModel, risk_warnings: List[dict]) -> None:
         """更新风险警告"""
         other_info = state.analysis_result.other_information
         
@@ -297,14 +297,14 @@ def create_other_info_extractor_node():
     
     def other_info_extractor_node(state: Dict[str, Any]) -> Dict[str, Any]:
         """其他信息提取节点函数"""
-        # 转换为GraphState对象
-        graph_state = GraphState(**state)
+        # 转换为GraphStateModel对象
+        graph_state = GraphStateModel(**state)
         
         # 执行其他信息提取
         graph_state = extractor.extract_contract_info(graph_state)
         graph_state = extractor.identify_risks(graph_state)
         
         # 转换回字典格式
-        return graph_state.dict()
+        return graph_state.model_dump()
     
     return other_info_extractor_node

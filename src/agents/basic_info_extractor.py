@@ -5,9 +5,9 @@ Basic information extraction node for the Langgraph workflow
 
 from typing import Dict, Any, List
 from loguru import logger
-from langchain.schema import Document
-from langchain.prompts import PromptTemplate
-from src.models.data_models import GraphState, ExtractedField, DocumentSource, QualificationCriteria
+from langchain_core.documents import Document
+from langchain_core.prompts import PromptTemplate
+from src.models.data_models import GraphState, GraphStateModel, ExtractedField, DocumentSource, QualificationCriteria
 from src.utils.llm_factory import LLMFactory
 import json
 import re
@@ -151,7 +151,7 @@ class BasicInfoExtractor:
             template=template
         )
     
-    def extract_basic_info(self, state: GraphState) -> GraphState:
+    def extract_basic_info(self, state: GraphStateModel) -> GraphStateModel:
         """
         提取基础信息
         
@@ -207,7 +207,7 @@ class BasicInfoExtractor:
         
         return state
     
-    def extract_qualification_criteria(self, state: GraphState) -> GraphState:
+    def extract_qualification_criteria(self, state: GraphStateModel) -> GraphStateModel:
         """
         提取资格审查硬性条件
         
@@ -278,7 +278,7 @@ class BasicInfoExtractor:
             logger.error(f"JSON解析失败: {e}")
             return {}
     
-    def _update_basic_info(self, state: GraphState, data: dict) -> None:
+    def _update_basic_info(self, state: GraphStateModel, data: dict) -> None:
         """更新基础信息"""
         for field_name, field_data in data.items():
             if isinstance(field_data, dict) and 'value' in field_data:
@@ -289,7 +289,7 @@ class BasicInfoExtractor:
                 )
                 setattr(state.analysis_result.basic_information, field_name, extracted_field)
     
-    def _update_qualification_criteria(self, state: GraphState, data: dict) -> None:
+    def _update_qualification_criteria(self, state: GraphStateModel, data: dict) -> None:
         """更新资格审查条件"""
         qualification = state.analysis_result.basic_information.qualification_criteria
         
@@ -312,14 +312,14 @@ def create_basic_info_extractor_node():
     
     def basic_info_extractor_node(state: Dict[str, Any]) -> Dict[str, Any]:
         """基础信息提取节点函数"""
-        # 转换为GraphState对象
-        graph_state = GraphState(**state)
-        
+        # 转换为GraphStateModel对象
+        graph_state = GraphStateModel(**state)
+
         # 执行基础信息提取
         graph_state = extractor.extract_basic_info(graph_state)
         graph_state = extractor.extract_qualification_criteria(graph_state)
-        
+
         # 转换回字典格式
-        return graph_state.dict()
+        return graph_state.model_dump()
     
     return basic_info_extractor_node

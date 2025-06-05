@@ -5,8 +5,8 @@ Scoring criteria analysis node for the Langgraph workflow
 
 from typing import Dict, Any, List
 from loguru import logger
-from langchain.prompts import PromptTemplate
-from src.models.data_models import GraphState, ExtractedField, DocumentSource, ScoringItem, ScoreComposition
+from langchain_core.prompts import PromptTemplate
+from src.models.data_models import GraphStateModel, ExtractedField, DocumentSource, ScoringItem, ScoreComposition
 from src.utils.llm_factory import LLMFactory
 import json
 import re
@@ -128,7 +128,7 @@ class ScoringAnalyzer:
             template=template
         )
     
-    def extract_scoring_criteria(self, state: GraphState) -> GraphState:
+    def extract_scoring_criteria(self, state: GraphStateModel) -> GraphStateModel:
         """
         提取评分标准
         
@@ -184,7 +184,7 @@ class ScoringAnalyzer:
         
         return state
     
-    def extract_detailed_scoring(self, state: GraphState) -> GraphState:
+    def extract_detailed_scoring(self, state: GraphStateModel) -> GraphStateModel:
         """
         提取详细评分细则
         
@@ -254,7 +254,7 @@ class ScoringAnalyzer:
             logger.error(f"JSON解析失败: {e}")
             return {}
     
-    def _update_scoring_criteria(self, state: GraphState, data: dict) -> None:
+    def _update_scoring_criteria(self, state: GraphStateModel, data: dict) -> None:
         """更新评分标准"""
         scoring_criteria = state.analysis_result.scoring_criteria
         
@@ -319,7 +319,7 @@ class ScoringAnalyzer:
                     if isinstance(item, dict) and 'value' in item
                 ])
     
-    def _update_detailed_scoring(self, state: GraphState, scoring_items: List[dict]) -> None:
+    def _update_detailed_scoring(self, state: GraphStateModel, scoring_items: List[dict]) -> None:
         """更新详细评分细则"""
         detailed_scoring = []
         
@@ -342,14 +342,14 @@ def create_scoring_analyzer_node():
     
     def scoring_analyzer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         """评分标准分析节点函数"""
-        # 转换为GraphState对象
-        graph_state = GraphState(**state)
+        # 转换为GraphStateModel对象
+        graph_state = GraphStateModel(**state)
         
         # 执行评分标准分析
         graph_state = analyzer.extract_scoring_criteria(graph_state)
         graph_state = analyzer.extract_detailed_scoring(graph_state)
         
         # 转换回字典格式
-        return graph_state.dict()
+        return graph_state.model_dump()
     
     return scoring_analyzer_node

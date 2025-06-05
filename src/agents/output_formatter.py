@@ -5,7 +5,7 @@ Output formatting node for the Langgraph workflow
 
 from typing import Dict, Any
 from loguru import logger
-from src.models.data_models import GraphState, ExtractedField
+from src.models.data_models import GraphStateModel, ExtractedField
 from config.settings import settings
 import os
 from datetime import datetime
@@ -17,15 +17,15 @@ class OutputFormatter:
         """初始化格式化器"""
         pass
     
-    def format_output(self, state: GraphState) -> GraphState:
+    def format_output(self, state: GraphStateModel) -> GraphStateModel:
         """
         格式化输出结果
-        
+
         Args:
             state: 图状态
-            
+
         Returns:
-            GraphState: 更新后的状态
+            GraphStateModel: 更新后的状态
         """
         try:
             logger.info("开始格式化输出结果")
@@ -50,7 +50,7 @@ class OutputFormatter:
         
         return state
     
-    def _generate_markdown_report(self, state: GraphState) -> str:
+    def _generate_markdown_report(self, state: GraphStateModel) -> str:
         """生成Markdown格式的报告"""
         result = state.analysis_result
         
@@ -306,8 +306,8 @@ def create_output_formatter_node():
     
     def output_formatter_node(state: Dict[str, Any]) -> Dict[str, Any]:
         """输出格式化节点函数"""
-        # 转换为GraphState对象
-        graph_state = GraphState(**state)
+        # 转换为GraphStateModel对象
+        graph_state = GraphStateModel(**state)
         
         # 执行输出格式化
         graph_state = formatter.format_output(graph_state)

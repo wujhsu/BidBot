@@ -133,15 +133,21 @@ def test_graph_creation():
     
     try:
         from src.graph.bidding_graph import bidding_graph
-        
         # 检查图是否正确创建
         if hasattr(bidding_graph, 'graph'):
             print("✓ Langgraph图创建成功")
-            
             # 显示图的可视化
             print("\n工作流图结构:")
             print(bidding_graph.get_graph_visualization())
-            
+            # 将生成的图片保存到文件
+            print("正在生成工作流图图片...")
+            try:
+                from langgraph.graph import MermaidDrawMethod
+                graph_png = bidding_graph.graph.get_graph().draw_mermaid_png(draw_method=MermaidDrawMethod.PYPPETEER)
+            except ImportError:
+                graph_png = bidding_graph.graph.get_graph().draw_mermaid_png()
+            with open("graph.png", "wb") as f:
+                f.write(graph_png)
             return True
         else:
             print("✗ Langgraph图创建失败")

@@ -6,6 +6,7 @@ Langgraph workflow definition for the Intelligent Bidding Assistant
 from typing import Dict, Any, Literal
 from langgraph.graph import StateGraph, END
 from loguru import logger
+from src.models.data_models import GraphState
 
 from src.agents.document_processor import create_document_processor_node
 from src.agents.basic_info_extractor import create_basic_info_extractor_node
@@ -24,7 +25,7 @@ class BiddingAnalysisGraph:
         """创建Langgraph工作流图"""
         
         # 创建状态图
-        workflow = StateGraph(dict)
+        workflow = StateGraph(GraphState)
         
         # 添加节点
         workflow.add_node("document_processor", create_document_processor_node())

@@ -119,8 +119,12 @@ def main():
                        help="仅测试LLM连接，不进行文档分析")
     parser.add_argument("--show-graph", action="store_true", 
                        help="显示工作流图结构")
-    parser.add_argument("--verbose", "-v", action="store_true", 
+    parser.add_argument("--verbose", "-v", action="store_true",
                        help="详细输出模式")
+    parser.add_argument("--no-isolation", action="store_true",
+                       help="禁用向量库隔离模式（可能导致历史数据交叉污染）")
+    parser.add_argument("--clear-vector-store", action="store_true",
+                       help="手动清空向量库历史数据")
     
     args = parser.parse_args()
     
@@ -137,6 +141,28 @@ def main():
         logger.info(f"使用LLM提供商: {args.provider}")
     else:
         logger.info(f"使用默认LLM提供商: {settings.llm_provider}")
+
+    # 设置向量库隔离模式
+    if args.no_isolation:
+        settings.clear_vector_store_on_new_document = False
+        logger.warning("已禁用向量库隔离模式，可能存在历史数据交叉污染风险")
+    else:
+        logger.info(f"向量库隔离模式: {'开启' if settings.clear_vector_store_on_new_document else '关闭'}")
+
+    # 手动清空向量库
+    if args.clear_vector_store:
+        logger.info("手动清空向量库...")
+        try:
+            from src.utils.vector_store import VectorStoreManager
+            from src.utils.llm_factory import LLMFactory
+            embeddings = LLMFactory.create_embeddings()
+            vector_manager = VectorStoreManager(embeddings)
+            vector_manager.clear_vector_store()
+            logger.info("向量库已清空")
+            return
+        except Exception as e:
+            logger.error(f"清空向量库失败: {e}")
+            sys.exit(1)
     
     # 显示配置信息
     logger.info("智能投标助手启动")
@@ -145,6 +171,7 @@ def main():
     logger.info(f"  - 输出目录: {settings.output_dir}")
     logger.info(f"  - 向量存储路径: {settings.vector_store_path}")
     logger.info(f"  - 文本分块大小: {settings.chunk_size}")
+    logger.info(f"  - 向量库隔离模式: {'开启' if settings.clear_vector_store_on_new_document else '关闭'}")
     
     # 显示工作流图
     if args.show_graph:
