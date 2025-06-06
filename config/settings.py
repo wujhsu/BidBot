@@ -73,22 +73,54 @@ class Settings(BaseSettings):
         description="检索返回的文档数量"
     )
     similarity_threshold: float = Field(
-        default=0.7,
+        default=0.5,
         description="相似度阈值"
     )
 
-    # 向量库隔离配置
-    clear_vector_store_on_new_document: bool = Field(
+    # 重排序配置
+    enable_reranking: bool = Field(
         default=True,
-        description="处理新文档时是否清空历史向量数据（推荐开启以避免交叉污染）"
+        description="是否启用重排序"
     )
-    
+    rerank_model: str = Field(
+        default="gte-rerank-v2",
+        description="重排序模型名称"
+    )
+    rerank_top_k: int = Field(
+        default=15,
+        description="重排序前的候选文档数量"
+    )
+    rerank_final_k: int = Field(
+        default=8,
+        description="重排序后的最终文档数量"
+    )
+
+    # 增强检索配置
+    enable_query_expansion: bool = Field(
+        default=False,
+        description="是否启用查询扩展"
+    )
+    enable_multi_round_retrieval: bool = Field(
+        default=True,
+        description="是否启用多轮检索"
+    )
+    max_retrieval_rounds: int = Field(
+        default=2,
+        description="最大检索轮数"
+    )
+
     # 输出配置
     output_dir: str = Field(
         default="./output",
         description="输出文件目录"
     )
-    
+
+    # 向量库隔离配置
+    clear_vector_store_on_new_document: bool = Field(
+        default=True,
+        description="处理新文档时是否清空历史向量数据"
+    )
+
     # 日志配置
     log_level: str = Field(
         default="INFO",

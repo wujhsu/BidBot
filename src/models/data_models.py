@@ -3,7 +3,7 @@
 Data models for the Intelligent Bidding Assistant
 """
 
-from typing import List, Optional, Dict, Any, TypedDict
+from typing import List, Optional, Dict, Any, TypedDict, Union
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -54,7 +54,7 @@ class ScoringItem(BaseModel):
     """评分项"""
     category: str = Field(description="评分类别")
     item_name: str = Field(description="评分项名称")
-    max_score: Optional[float] = Field(None, description="最高分值")
+    max_score: Optional[Union[float, str]] = Field(None, description="最高分值（数字或说明）")
     criteria: Optional[str] = Field(None, description="评分标准")
     source: Optional[DocumentSource] = Field(None, description="来源信息")
 

@@ -8,6 +8,8 @@ from loguru import logger
 from langchain_core.prompts import PromptTemplate
 from src.models.data_models import GraphStateModel, ExtractedField, DocumentSource, ScoringItem, ScoreComposition
 from src.utils.llm_factory import LLMFactory
+from src.utils.enhanced_retrieval import ContextualRetriever, SmartQueryRouter
+from src.utils.improved_retrieval import ImprovedRetriever
 import json
 import re
 
@@ -19,6 +21,7 @@ class ScoringAnalyzer:
         self.llm = LLMFactory.create_llm()
         self.scoring_prompt = self._create_scoring_prompt()
         self.detailed_scoring_prompt = self._create_detailed_scoring_prompt()
+        self.query_router = SmartQueryRouter()
     
     def _create_scoring_prompt(self) -> PromptTemplate:
         """创建评分标准提取提示模板"""
@@ -116,12 +119,29 @@ class ScoringAnalyzer:
     ]
 }}
 
-注意事项：
-1. 逐项列出所有评分项、分值、评分标准
-2. 准确提取数字分值
-3. 完整记录评分标准描述
-4. 按技术、商务、价格等类别分类
-5. 严格忠于原文内容
+重要提取规则：
+1. **优先查找评分表格、附表、评分细则表**：
+   - 寻找"评标办法前附表"、"评分标准表"、"技术评分细则表"等
+   - 从表格中提取具体的分值数字
+
+2. **分值提取要求**：
+   - 如果找到具体数字分值，使用数字（如30.0、20.0）
+   - 如果只有"见评标办法前附表"等引用，但文档中包含附表内容，从附表中提取具体分值
+   - 如果确实无法找到具体分值，使用字符串说明（如"见评标办法前附表"）
+
+3. **全面搜索策略**：
+   - 仔细查看所有文档片段，寻找评分表格
+   - 关注"技术分"、"商务分"、"价格分"的具体分值
+   - 查找"30分"、"20分"、"15分"等具体数字
+
+4. **表格信息优先**：
+   - 如果文档中同时有概述和详细表格，优先使用表格中的具体分值
+   - 将表格中的每一行都作为一个评分项提取
+
+5. **完整性要求**：
+   - 逐项列出所有评分项、分值、评分标准
+   - 按技术、商务、价格等类别分类
+   - 严格忠于原文内容，不要遗漏任何评分项
 """
         return PromptTemplate(
             input_variables=["document_chunks"],
@@ -144,25 +164,22 @@ class ScoringAnalyzer:
             if not state.vector_store:
                 raise ValueError("向量存储未初始化")
             
-            # 搜索相关文档片段
-            scoring_queries = [
-                "评分标准 评分方法",
-                "初步评审 资格审查",
-                "综合评估法 最低价评标法",
-                "技术分 商务分 价格分",
-                "评分细则 评分表",
-                "加分项 优惠条件",
-                "否决项 废标条件 ★ *"
-            ]
-            
+            # 使用改进的检索策略
+            improved_retriever = ImprovedRetriever(state.vector_store)
+
+            # 专门针对评分标准的检索
+            enhanced_results = improved_retriever.retrieve_scoring_criteria("评分标准 评分方法")
+
+            # 提取文档内容
             relevant_chunks = []
-            for query in scoring_queries:
-                docs = state.vector_store.similarity_search(query, k=4)
-                relevant_chunks.extend([doc.page_content for doc in docs])
-            
-            # 去重并限制长度
-            unique_chunks = list(set(relevant_chunks))[:15]
-            chunks_text = "\n\n---\n\n".join(unique_chunks)
+            for doc, vec_score, rerank_score in enhanced_results:
+                relevant_chunks.append(doc.page_content)
+                logger.debug(f"检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
+
+            # 不过度限制文档数量，保留更多信息
+            chunks_text = "\n\n---\n\n".join(relevant_chunks)
+
+            logger.info(f"评分标准检索完成，使用 {len(relevant_chunks)} 个文档片段")
             
             # 调用LLM提取信息
             prompt = self.scoring_prompt.format(document_chunks=chunks_text)
@@ -200,23 +217,22 @@ class ScoringAnalyzer:
             if not state.vector_store:
                 raise ValueError("向量存储未初始化")
             
-            # 搜索详细评分表相关片段
-            detailed_queries = [
-                "评分细则表 评分表",
-                "技术评分 技术标准",
-                "商务评分 商务标准",
-                "价格评分 价格计算",
-                "分值 得分 评分项"
-            ]
-            
+            # 使用改进的检索策略获取详细评分信息
+            improved_retriever = ImprovedRetriever(state.vector_store)
+
+            # 专门针对详细评分的检索
+            enhanced_results = improved_retriever.retrieve_detailed_scoring("评分细则 评分表")
+
+            # 提取文档内容
             relevant_chunks = []
-            for query in detailed_queries:
-                docs = state.vector_store.similarity_search(query, k=5)
-                relevant_chunks.extend([doc.page_content for doc in docs])
-            
-            # 去重并限制长度
-            unique_chunks = list(set(relevant_chunks))[:20]
-            chunks_text = "\n\n---\n\n".join(unique_chunks)
+            for doc, vec_score, rerank_score in enhanced_results:
+                relevant_chunks.append(doc.page_content)
+                logger.debug(f"详细评分检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
+
+            # 保留更多文档信息
+            chunks_text = "\n\n---\n\n".join(relevant_chunks)
+
+            logger.info(f"详细评分检索完成，使用 {len(relevant_chunks)} 个文档片段")
             
             # 调用LLM提取信息
             prompt = self.detailed_scoring_prompt.format(document_chunks=chunks_text)
@@ -322,18 +338,31 @@ class ScoringAnalyzer:
     def _update_detailed_scoring(self, state: GraphStateModel, scoring_items: List[dict]) -> None:
         """更新详细评分细则"""
         detailed_scoring = []
-        
+
         for item in scoring_items:
             if isinstance(item, dict):
+                # 处理max_score字段，支持数字和字符串
+                max_score = item.get('max_score')
+                if isinstance(max_score, str):
+                    # 尝试从字符串中提取数字
+                    import re
+                    number_match = re.search(r'(\d+(?:\.\d+)?)', max_score)
+                    if number_match:
+                        try:
+                            max_score = float(number_match.group(1))
+                        except ValueError:
+                            # 如果转换失败，保持原字符串
+                            pass
+
                 scoring_item = ScoringItem(
                     category=item.get('category', ''),
                     item_name=item.get('item_name', ''),
-                    max_score=item.get('max_score'),
+                    max_score=max_score,
                     criteria=item.get('criteria'),
                     source=DocumentSource(source_text=item.get('source_text'))
                 )
                 detailed_scoring.append(scoring_item)
-        
+
         state.analysis_result.scoring_criteria.detailed_scoring = detailed_scoring
 
 def create_scoring_analyzer_node():

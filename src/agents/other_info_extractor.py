@@ -8,6 +8,8 @@ from loguru import logger
 from langchain_core.prompts import PromptTemplate
 from src.models.data_models import GraphStateModel, ExtractedField, DocumentSource
 from src.utils.llm_factory import LLMFactory
+from src.utils.enhanced_retrieval import ContextualRetriever, SmartQueryRouter
+from src.utils.improved_retrieval import ImprovedRetriever
 import json
 import re
 
@@ -19,6 +21,7 @@ class OtherInfoExtractor:
         self.llm = LLMFactory.create_llm()
         self.contract_prompt = self._create_contract_prompt()
         self.risk_prompt = self._create_risk_prompt()
+        self.query_router = SmartQueryRouter()
     
     def _create_contract_prompt(self) -> PromptTemplate:
         """创建合同条款提取提示模板"""
@@ -132,20 +135,17 @@ class OtherInfoExtractor:
             if not state.vector_store:
                 raise ValueError("向量存储未初始化")
             
-            # 搜索相关文档片段
-            contract_queries = [
-                "合同条款 合同约定",
-                "付款方式 付款条件 预付款 进度款",
-                "交付期限 完成时间 工期",
-                "投标有效期 有效期",
-                "知识产权 专利权 著作权",
-                "保密协议 保密条款 商业秘密"
-            ]
-            
+            # 使用改进的检索策略
+            improved_retriever = ImprovedRetriever(state.vector_store)
+
+            # 专门针对合同信息的检索
+            enhanced_results = improved_retriever.retrieve_contract_info("合同条款 合同约定")
+
+            # 提取文档内容
             relevant_chunks = []
-            for query in contract_queries:
-                docs = state.vector_store.similarity_search(query, k=3)
-                relevant_chunks.extend([doc.page_content for doc in docs])
+            for doc, vec_score, rerank_score in enhanced_results:
+                relevant_chunks.append(doc.page_content)
+                logger.debug(f"合同信息检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
             
             # 去重并限制长度
             unique_chunks = list(set(relevant_chunks))[:12]
@@ -187,21 +187,17 @@ class OtherInfoExtractor:
             if not state.vector_store:
                 raise ValueError("向量存储未初始化")
             
-            # 搜索可能包含风险的文档片段
-            risk_queries = [
-                "违约 责任 赔偿 罚款",
-                "保证金 履约保证金",
-                "废标 否决 取消资格",
-                "特殊要求 特别约定",
-                "技术要求 性能指标",
-                "时间要求 期限 工期",
-                "★ * 重要 关键"
-            ]
-            
+            # 使用改进的检索策略识别风险
+            improved_retriever = ImprovedRetriever(state.vector_store)
+
+            # 专门针对风险识别的检索
+            enhanced_results = improved_retriever.retrieve_risk_info("违约 责任 赔偿 风险")
+
+            # 提取文档内容
             relevant_chunks = []
-            for query in risk_queries:
-                docs = state.vector_store.similarity_search(query, k=4)
-                relevant_chunks.extend([doc.page_content for doc in docs])
+            for doc, vec_score, rerank_score in enhanced_results:
+                relevant_chunks.append(doc.page_content)
+                logger.debug(f"风险识别检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
             
             # 去重并限制长度
             unique_chunks = list(set(relevant_chunks))[:15]

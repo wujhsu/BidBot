@@ -9,6 +9,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 from src.models.data_models import GraphState, GraphStateModel, ExtractedField, DocumentSource, QualificationCriteria
 from src.utils.llm_factory import LLMFactory
+from src.utils.enhanced_retrieval import ContextualRetriever, SmartQueryRouter
 import json
 import re
 
@@ -19,6 +20,7 @@ class BasicInfoExtractor:
         """初始化基础信息提取器"""
         self.llm = LLMFactory.create_llm()
         self.extraction_prompt = self._create_extraction_prompt()
+        self.query_router = SmartQueryRouter()
 
     def _create_extraction_prompt(self) -> PromptTemplate:
         """创建信息提取提示模板"""
@@ -167,24 +169,30 @@ class BasicInfoExtractor:
             if not state.vector_store:
                 raise ValueError("向量存储未初始化")
             
-            # 搜索相关文档片段
-            basic_info_queries = [
-                "项目名称 招标编号",
-                "预算金额 采购金额",
-                "投标截止时间 开标时间",
-                "投标保证金",
-                "采购人 采购代理机构",
-                "联系方式 联系人"
-            ]
-            
+            # 使用增强的检索策略
+            contextual_retriever = ContextualRetriever(state.vector_store)
+
+            # 智能查询路由
+            main_query = "项目名称 招标编号 基础信息"
+            query_category = self.query_router.route_query(main_query)
+
+            # 获取基础信息相关的查询
+            basic_info_queries = self.query_router.get_category_specific_queries(query_category, main_query)
+
+            # 多轮增强检索
+            enhanced_results = contextual_retriever.multi_round_retrieve(basic_info_queries)
+
+            # 提取文档内容
             relevant_chunks = []
-            for query in basic_info_queries:
-                docs = state.vector_store.similarity_search(query, k=3)
-                relevant_chunks.extend([doc.page_content for doc in docs])
-            
-            # 去重并限制长度
+            for doc, vec_score, rerank_score in enhanced_results:
+                relevant_chunks.append(doc.page_content)
+                logger.debug(f"基础信息检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
+
+            # 限制长度
             unique_chunks = list(set(relevant_chunks))[:10]
             chunks_text = "\n\n---\n\n".join(unique_chunks)
+
+            logger.info(f"基础信息检索完成，使用 {len(unique_chunks)} 个文档片段")
             
             # 调用LLM提取信息
             prompt = self.extraction_prompt.format(document_chunks=chunks_text)
@@ -223,7 +231,10 @@ class BasicInfoExtractor:
             if not state.vector_store:
                 raise ValueError("向量存储未初始化")
             
-            # 搜索相关文档片段
+            # 使用增强的检索策略
+            contextual_retriever = ContextualRetriever(state.vector_store)
+
+            # 构建资格审查查询
             qualification_queries = [
                 "资格审查 资质要求",
                 "企业资质 营业执照",
@@ -232,15 +243,21 @@ class BasicInfoExtractor:
                 "财务状况 注册资金",
                 "体系认证 ISO认证"
             ]
-            
+
+            # 多轮增强检索
+            enhanced_results = contextual_retriever.multi_round_retrieve(qualification_queries)
+
+            # 提取文档内容
             relevant_chunks = []
-            for query in qualification_queries:
-                docs = state.vector_store.similarity_search(query, k=3)
-                relevant_chunks.extend([doc.page_content for doc in docs])
-            
-            # 去重并限制长度
+            for doc, vec_score, rerank_score in enhanced_results:
+                relevant_chunks.append(doc.page_content)
+                logger.debug(f"资格审查检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
+
+            # 限制长度
             unique_chunks = list(set(relevant_chunks))[:10]
             chunks_text = "\n\n---\n\n".join(unique_chunks)
+
+            logger.info(f"资格审查检索完成，使用 {len(unique_chunks)} 个文档片段")
             
             # 调用LLM提取信息
             qualification_prompt = self._create_qualification_prompt()

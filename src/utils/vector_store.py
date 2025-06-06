@@ -342,13 +342,13 @@ class VectorStoreManager:
     def get_collection_info(self) -> dict:
         """
         获取集合信息
-        
+
         Returns:
             dict: 集合信息
         """
         if self.vector_store is None:
             return {"status": "未初始化"}
-        
+
         try:
             collection = self.vector_store._collection
             return {
@@ -359,3 +359,104 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"获取集合信息失败: {e}")
             return {"status": "错误", "error": str(e)}
+
+    def enhanced_similarity_search(
+        self,
+        query: str,
+        k: int = None,
+        use_reranking: bool = None
+    ) -> List[Tuple[Document, float, float]]:
+        """
+        增强的相似度搜索，支持重排序
+
+        Args:
+            query: 查询文本
+            k: 返回文档数量
+            use_reranking: 是否使用重排序
+
+        Returns:
+            List[Tuple[Document, float, float]]: (文档, 向量分数, 重排序分数)列表
+        """
+        if self.vector_store is None:
+            raise ValueError("向量存储未初始化")
+
+        if k is None:
+            k = settings.rerank_final_k
+        if use_reranking is None:
+            use_reranking = settings.enable_reranking
+
+        try:
+            # 第一步：向量检索
+            initial_k = settings.rerank_top_k if use_reranking else k
+            vector_results = self.vector_store.similarity_search_with_score(query, k=initial_k)
+
+            if not vector_results:
+                return []
+
+            # 第二步：重排序（如果启用）
+            if use_reranking and settings.enable_reranking:
+                try:
+                    from src.utils.reranker import RerankerManager
+                    reranker = RerankerManager()
+
+                    if reranker.enabled:
+                        reranked_results = reranker.rerank_with_scores(query, vector_results, k)
+                        logger.debug(f"增强检索完成，重排序后返回 {len(reranked_results)} 个文档")
+                        return reranked_results
+                    else:
+                        logger.warning("重排序器未启用，使用向量检索结果")
+
+                except ImportError:
+                    logger.warning("重排序模块导入失败，使用向量检索结果")
+                except Exception as e:
+                    logger.error(f"重排序过程失败: {e}，使用向量检索结果")
+
+            # 返回向量检索结果
+            return [(doc, score, score) for doc, score in vector_results[:k]]
+
+        except Exception as e:
+            logger.error(f"增强相似度搜索失败: {e}")
+            raise
+
+    def multi_query_search(
+        self,
+        queries: List[str],
+        k_per_query: int = None,
+        final_k: int = None
+    ) -> List[Tuple[Document, float, float]]:
+        """
+        多查询搜索并合并结果
+
+        Args:
+            queries: 查询列表
+            k_per_query: 每个查询返回的文档数量
+            final_k: 最终返回的文档数量
+
+        Returns:
+            List[Tuple[Document, float, float]]: 合并后的文档列表
+        """
+        if k_per_query is None:
+            k_per_query = settings.retrieval_k
+        if final_k is None:
+            final_k = settings.rerank_final_k
+
+        all_results = []
+        seen_contents = set()
+
+        for query in queries:
+            try:
+                query_results = self.enhanced_similarity_search(query, k=k_per_query)
+
+                for doc, vec_score, rerank_score in query_results:
+                    content_hash = hash(doc.page_content)
+                    if content_hash not in seen_contents:
+                        seen_contents.add(content_hash)
+                        all_results.append((doc, vec_score, rerank_score))
+
+            except Exception as e:
+                logger.error(f"查询 '{query}' 搜索失败: {e}")
+                continue
+
+        # 按重排序分数排序
+        all_results.sort(key=lambda x: x[2], reverse=True)
+        return all_results[:final_k]
