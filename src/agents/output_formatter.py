@@ -5,7 +5,7 @@ Output formatting node for the Langgraph workflow
 
 from typing import Dict, Any
 from loguru import logger
-from src.models.data_models import GraphStateModel, ExtractedField
+from src.models.data_models import GraphState, GraphStateModel, ExtractedField
 from config.settings import settings
 import os
 from datetime import datetime
@@ -17,7 +17,7 @@ class OutputFormatter:
         """初始化格式化器"""
         pass
     
-    def format_output(self, state: GraphStateModel) -> GraphStateModel:
+    def format_output(self, state: GraphState) -> GraphState:
         """
         格式化输出结果
 
@@ -25,32 +25,38 @@ class OutputFormatter:
             state: 图状态
 
         Returns:
-            GraphStateModel: 更新后的状态
+            GraphState: 更新后的状态
         """
         try:
             logger.info("开始格式化输出结果")
-            
+
+            # 检查状态对象类型
+            if isinstance(state, dict):
+                logger.warning("状态对象是字典类型，尝试转换为GraphStateModel")
+                state = GraphStateModel(**state)
+
             # 生成Markdown报告
             markdown_content = self._generate_markdown_report(state)
-            
+
             # 保存到文件
             output_file = self._save_report(markdown_content, state.analysis_result.document_name)
-            
+
             # 更新状态
             state.current_step = "completed"
             state.analysis_result.processing_notes.append(f"报告已保存到: {output_file}")
-            
+
             logger.info(f"输出格式化完成，报告保存到: {output_file}")
-            
+
         except Exception as e:
             error_msg = f"输出格式化失败: {str(e)}"
             logger.error(error_msg)
-            state.error_messages.append(error_msg)
+            if hasattr(state, 'error_messages'):
+                state.error_messages.append(error_msg)
             state.current_step = "error"
-        
+
         return state
     
-    def _generate_markdown_report(self, state: GraphStateModel) -> str:
+    def _generate_markdown_report(self, state: GraphState) -> str:
         """生成Markdown格式的报告"""
         result = state.analysis_result
         
@@ -90,7 +96,10 @@ class OutputFormatter:
         for field_name, field_value in basic_fields:
             value = self._format_extracted_field(field_value)
             source = self._get_source_info(field_value)
-            markdown += f"| {field_name} | {value} | {source} |\n"
+            # 清理表格内容，避免换行符导致的格式问题
+            value_clean = self._clean_table_content(value)
+            source_clean = self._clean_table_content(source)
+            markdown += f"| {field_name} | {value_clean} | {source_clean} |\n"
         
         # 资格审查硬性条件
         markdown += "\n### 资格审查硬性条件\n\n"
@@ -166,13 +175,17 @@ class OutputFormatter:
             if field_value.value:
                 value = self._format_extracted_field(field_value)
                 source = self._get_source_info(field_value)
-                markdown += f"| {field_name} | {value} | {source} |\n"
-        
+                value_clean = self._clean_table_content(value)
+                source_clean = self._clean_table_content(source)
+                markdown += f"| {field_name} | {value_clean} | {source_clean} |\n"
+
         for other_score in score_comp.other_scores:
             if other_score.value:
                 value = self._format_extracted_field(other_score)
                 source = self._get_source_info(other_score)
-                markdown += f"| 其他 | {value} | {source} |\n"
+                value_clean = self._clean_table_content(value)
+                source_clean = self._clean_table_content(source)
+                markdown += f"| 其他 | {value_clean} | {source_clean} |\n"
         
         markdown += "\n"
         
@@ -183,10 +196,10 @@ class OutputFormatter:
             markdown += "|----------|--------|----------|----------|\n"
             
             for item in scoring.detailed_scoring:
-                category = item.category or "未分类"
-                item_name = item.item_name or "未命名"
-                max_score = str(item.max_score) if item.max_score is not None else "未指定"
-                criteria = item.criteria or "未指定"
+                category = self._clean_table_content(item.category or "未分类")
+                item_name = self._clean_table_content(item.item_name or "未命名")
+                max_score = self._clean_table_content(str(item.max_score) if item.max_score is not None else "未指定")
+                criteria = self._clean_table_content(item.criteria or "未指定")
                 markdown += f"| {category} | {item_name} | {max_score} | {criteria} |\n"
             
             markdown += "\n"
@@ -276,13 +289,48 @@ class OutputFormatter:
         """获取来源信息"""
         if not field or not field.source or not field.source.source_text:
             return "来源未知"
-        
+
+        # 构建来源信息
+        source_parts = []
+
+        # 添加页码信息（如果有）
+        if field.source.page_number:
+            source_parts.append(f"第{field.source.page_number}页")
+
+        # 添加章节信息（如果有）
+        if field.source.section:
+            source_parts.append(f"章节: {field.source.section}")
+
         # 截取来源文本的前50个字符
         source_text = field.source.source_text[:50]
         if len(field.source.source_text) > 50:
             source_text += "..."
-        
-        return f"原文: {source_text}"
+
+        # 组合来源信息
+        location_info = " | ".join(source_parts) if source_parts else ""
+        if location_info:
+            return f"{location_info} | 原文: {source_text}"
+        else:
+            return f"原文: {source_text}"
+
+    def _clean_table_content(self, content: str) -> str:
+        """清理表格内容，避免换行符等特殊字符导致的格式问题"""
+        if not content:
+            return ""
+
+        # 替换换行符为空格
+        content = content.replace('\n', ' ').replace('\r', ' ')
+        # 替换制表符为空格
+        content = content.replace('\t', ' ')
+        # 替换管道符，避免破坏表格结构
+        content = content.replace('|', '｜')
+        # 压缩多个空格为单个空格
+        import re
+        content = re.sub(r'\s+', ' ', content)
+        # 去除首尾空格
+        content = content.strip()
+
+        return content
     
     def _save_report(self, content: str, document_name: str) -> str:
         """保存报告到文件"""
@@ -308,11 +356,11 @@ def create_output_formatter_node():
         """输出格式化节点函数"""
         # 转换为GraphStateModel对象
         graph_state = GraphStateModel(**state)
-        
+
         # 执行输出格式化
         graph_state = formatter.format_output(graph_state)
-        
+
         # 转换回字典格式
-        return graph_state.dict()
+        return graph_state.model_dump()
     
     return output_formatter_node

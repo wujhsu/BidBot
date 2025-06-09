@@ -6,7 +6,7 @@ Langgraph workflow definition for the Intelligent Bidding Assistant
 from typing import Dict, Any, Literal
 from langgraph.graph import StateGraph, END
 from loguru import logger
-from src.models.data_models import GraphState
+from src.models.data_models import GraphState, GraphStateModel
 
 from src.agents.document_processor import create_document_processor_node
 from src.agents.basic_info_extractor import create_basic_info_extractor_node
@@ -170,19 +170,19 @@ class BiddingAnalysisGraph:
             from src.models.data_models import BiddingAnalysisResult
             import os
 
-            initial_state = {
-                "document_path": document_path,
-                "document_content": None,
-                "chunks": [],
-                "vector_store": None,
-                "analysis_result": BiddingAnalysisResult(document_name=os.path.basename(document_path)),
-                "current_step": "start",
-                "error_messages": [],
-                "retry_count": 0
-            }
+            initial_state = GraphStateModel(
+                document_path=document_path,
+                document_content=None,
+                chunks=[],
+                vector_store=None,
+                analysis_result=BiddingAnalysisResult(document_name=os.path.basename(document_path)),
+                current_step="start",
+                error_messages=[],
+                retry_count=0
+            )
             
             # 运行图
-            final_state = self.graph.invoke(initial_state)
+            final_state = self.graph.invoke(initial_state.model_dump())
             
             logger.info(f"分析完成，最终状态: {final_state.get('current_step', 'unknown')}")
             return final_state

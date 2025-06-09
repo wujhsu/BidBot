@@ -3,7 +3,7 @@
 Basic information extraction node for the Langgraph workflow
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from loguru import logger
 from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
@@ -182,15 +182,22 @@ class BasicInfoExtractor:
             # 多轮增强检索
             enhanced_results = contextual_retriever.multi_round_retrieve(basic_info_queries)
 
-            # 提取文档内容
+            # 提取文档内容和元数据
             relevant_chunks = []
+            doc_metadata_map = {}
             for doc, vec_score, rerank_score in enhanced_results:
-                relevant_chunks.append(doc.page_content)
+                chunk_content = doc.page_content
+                relevant_chunks.append(chunk_content)
+                # 保存文档内容与元数据的映射关系
+                doc_metadata_map[chunk_content] = doc.metadata
                 logger.debug(f"基础信息检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
 
             # 限制长度
             unique_chunks = list(set(relevant_chunks))[:10]
             chunks_text = "\n\n---\n\n".join(unique_chunks)
+
+            # 保存文档元数据映射，供后续使用
+            self._doc_metadata_map = doc_metadata_map
 
             logger.info(f"基础信息检索完成，使用 {len(unique_chunks)} 个文档片段")
             
@@ -247,15 +254,22 @@ class BasicInfoExtractor:
             # 多轮增强检索
             enhanced_results = contextual_retriever.multi_round_retrieve(qualification_queries)
 
-            # 提取文档内容
+            # 提取文档内容和元数据
             relevant_chunks = []
+            qualification_metadata_map = {}
             for doc, vec_score, rerank_score in enhanced_results:
-                relevant_chunks.append(doc.page_content)
+                chunk_content = doc.page_content
+                relevant_chunks.append(chunk_content)
+                # 保存文档内容与元数据的映射关系
+                qualification_metadata_map[chunk_content] = doc.metadata
                 logger.debug(f"资格审查检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
 
             # 限制长度
             unique_chunks = list(set(relevant_chunks))[:10]
             chunks_text = "\n\n---\n\n".join(unique_chunks)
+
+            # 保存文档元数据映射，供后续使用
+            self._qualification_metadata_map = qualification_metadata_map
 
             logger.info(f"资格审查检索完成，使用 {len(unique_chunks)} 个文档片段")
             
@@ -294,14 +308,74 @@ class BasicInfoExtractor:
         except json.JSONDecodeError as e:
             logger.error(f"JSON解析失败: {e}")
             return {}
+
+    def _extract_page_number(self, source_text: str) -> Optional[int]:
+        """从来源文本中提取页码信息"""
+        if not source_text:
+            return None
+
+        # 查找页码标记模式：--- 第X页 ---（PDF文件和改进后的DOCX文件）
+        page_pattern = r'--- 第(\d+)页 ---'
+        match = re.search(page_pattern, source_text)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                pass
+
+        # 查找段落标记模式：--- 第X段 ---（旧版DOCX文件处理方式，作为回退）
+        para_pattern = r'--- 第(\d+)段 ---'
+        match = re.search(para_pattern, source_text)
+        if match:
+            try:
+                para_num = int(match.group(1))
+                # 假设每页大约有20-30段，这里使用25段作为估算
+                estimated_page = max(1, (para_num - 1) // 25 + 1)
+                logger.warning(f"使用段落号估算页码：段落{para_num} -> 页码{estimated_page}")
+                return estimated_page
+            except ValueError:
+                pass
+
+        # 查找行号标记模式：--- 第X行 ---（TXT文件）
+        line_pattern = r'--- 第(\d+)行 ---'
+        match = re.search(line_pattern, source_text)
+        if match:
+            try:
+                line_num = int(match.group(1))
+                # 假设每页大约有50行
+                estimated_page = max(1, (line_num - 1) // 50 + 1)
+                logger.warning(f"使用行号估算页码：行{line_num} -> 页码{estimated_page}")
+                return estimated_page
+            except ValueError:
+                pass
+
+        return None
     
     def _update_basic_info(self, state: GraphStateModel, data: dict) -> None:
         """更新基础信息"""
         for field_name, field_data in data.items():
             if isinstance(field_data, dict) and 'value' in field_data:
+                source_text = field_data.get('source_text', '')
+
+                # 尝试从文档元数据映射中获取页码信息
+                page_number = None
+                if hasattr(self, '_doc_metadata_map') and source_text:
+                    # 查找包含此来源文本的文档
+                    for doc_content, metadata in self._doc_metadata_map.items():
+                        if source_text in doc_content:
+                            page_number = metadata.get('page_number')
+                            break
+
+                # 如果没有找到，则从文本中提取
+                if not page_number:
+                    page_number = field_data.get('page_number') or self._extract_page_number(source_text)
+
                 extracted_field = ExtractedField(
                     value=field_data.get('value'),
-                    source=DocumentSource(source_text=field_data.get('source_text')),
+                    source=DocumentSource(
+                        source_text=source_text,
+                        page_number=page_number
+                    ),
                     confidence=field_data.get('confidence', 0.5)
                 )
                 setattr(state.analysis_result.basic_information, field_name, extracted_field)
@@ -309,15 +383,33 @@ class BasicInfoExtractor:
     def _update_qualification_criteria(self, state: GraphStateModel, data: dict) -> None:
         """更新资格审查条件"""
         qualification = state.analysis_result.basic_information.qualification_criteria
-        
+
         for category, items in data.items():
             if isinstance(items, list):
                 extracted_fields = []
                 for item in items:
                     if isinstance(item, dict) and 'value' in item:
+                        source_text = item.get('source_text', '')
+
+                        # 尝试从文档元数据映射中获取页码信息
+                        page_number = None
+                        if hasattr(self, '_qualification_metadata_map') and source_text:
+                            # 查找包含此来源文本的文档
+                            for doc_content, metadata in self._qualification_metadata_map.items():
+                                if source_text in doc_content:
+                                    page_number = metadata.get('page_number')
+                                    break
+
+                        # 如果没有找到，则从文本中提取
+                        if not page_number:
+                            page_number = item.get('page_number') or self._extract_page_number(source_text)
+
                         extracted_field = ExtractedField(
                             value=item.get('value'),
-                            source=DocumentSource(source_text=item.get('source_text')),
+                            source=DocumentSource(
+                                source_text=source_text,
+                                page_number=page_number
+                            ),
                             confidence=item.get('confidence', 0.5)
                         )
                         extracted_fields.append(extracted_field)

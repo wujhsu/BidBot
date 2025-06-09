@@ -90,7 +90,7 @@ idna==3.10
 
 # ===== 可选依赖 Optional Dependencies =====
 # 如果需要更好的 PDF 处理能力
-# pymupdf==1.26.0
+pymupdf==1.26.0
 
 # 如果需要 Excel 文件支持
 # openpyxl==3.1.5

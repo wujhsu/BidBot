@@ -3,7 +3,7 @@
 Other important information extraction node for the Langgraph workflow
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from loguru import logger
 from langchain_core.prompts import PromptTemplate
 from src.models.data_models import GraphStateModel, ExtractedField, DocumentSource
@@ -238,6 +238,48 @@ class OtherInfoExtractor:
         except json.JSONDecodeError as e:
             logger.error(f"JSON解析失败: {e}")
             return {}
+
+    def _extract_page_number(self, source_text: str) -> Optional[int]:
+        """从来源文本中提取页码信息"""
+        if not source_text:
+            return None
+
+        # 查找页码标记模式：--- 第X页 ---（PDF文件和改进后的DOCX文件）
+        page_pattern = r'--- 第(\d+)页 ---'
+        match = re.search(page_pattern, source_text)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                pass
+
+        # 查找段落标记模式：--- 第X段 ---（旧版DOCX文件处理方式，作为回退）
+        para_pattern = r'--- 第(\d+)段 ---'
+        match = re.search(para_pattern, source_text)
+        if match:
+            try:
+                para_num = int(match.group(1))
+                # 假设每页大约有20-30段，这里使用25段作为估算
+                estimated_page = max(1, (para_num - 1) // 25 + 1)
+                logger.warning(f"使用段落号估算页码：段落{para_num} -> 页码{estimated_page}")
+                return estimated_page
+            except ValueError:
+                pass
+
+        # 查找行号标记模式：--- 第X行 ---（TXT文件）
+        line_pattern = r'--- 第(\d+)行 ---'
+        match = re.search(line_pattern, source_text)
+        if match:
+            try:
+                line_num = int(match.group(1))
+                # 假设每页大约有50行
+                estimated_page = max(1, (line_num - 1) // 50 + 1)
+                logger.warning(f"使用行号估算页码：行{line_num} -> 页码{estimated_page}")
+                return estimated_page
+            except ValueError:
+                pass
+
+        return None
     
     def _update_contract_info(self, state: GraphStateModel, data: dict) -> None:
         """更新合同信息"""
@@ -245,15 +287,21 @@ class OtherInfoExtractor:
         
         # 更新合同条款
         if 'contract_terms' in data and isinstance(data['contract_terms'], list):
-            other_info.contract_terms = [
-                ExtractedField(
-                    value=item.get('value'),
-                    source=DocumentSource(source_text=item.get('source_text')),
-                    confidence=item.get('confidence', 0.5)
-                )
-                for item in data['contract_terms']
-                if isinstance(item, dict) and 'value' in item
-            ]
+            contract_terms = []
+            for item in data['contract_terms']:
+                if isinstance(item, dict) and 'value' in item:
+                    source_text = item.get('source_text', '')
+                    page_number = self._extract_page_number(source_text)
+
+                    contract_terms.append(ExtractedField(
+                        value=item.get('value'),
+                        source=DocumentSource(
+                            source_text=source_text,
+                            page_number=page_number
+                        ),
+                        confidence=item.get('confidence', 0.5)
+                    ))
+            other_info.contract_terms = contract_terms
         
         # 更新其他单项信息
         single_fields = [
@@ -264,9 +312,15 @@ class OtherInfoExtractor:
         for field_name in single_fields:
             if field_name in data and isinstance(data[field_name], dict):
                 field_data = data[field_name]
+                source_text = field_data.get('source_text', '')
+                page_number = self._extract_page_number(source_text)
+
                 setattr(other_info, field_name, ExtractedField(
                     value=field_data.get('value'),
-                    source=DocumentSource(source_text=field_data.get('source_text')),
+                    source=DocumentSource(
+                        source_text=source_text,
+                        page_number=page_number
+                    ),
                     confidence=field_data.get('confidence', 0.5)
                 ))
     
@@ -277,9 +331,15 @@ class OtherInfoExtractor:
         risk_fields = []
         for item in risk_warnings:
             if isinstance(item, dict) and 'value' in item:
+                source_text = item.get('source_text', '')
+                page_number = self._extract_page_number(source_text)
+
                 risk_field = ExtractedField(
                     value=item.get('value'),
-                    source=DocumentSource(source_text=item.get('source_text')),
+                    source=DocumentSource(
+                        source_text=source_text,
+                        page_number=page_number
+                    ),
                     confidence=item.get('confidence', 0.5),
                     notes=item.get('notes')
                 )
