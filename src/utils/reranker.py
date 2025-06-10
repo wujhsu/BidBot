@@ -15,7 +15,7 @@ import time
 class RerankerManager:
     """重排序管理器"""
     
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: Optional[str] = None):
         """
         初始化重排序管理器
         

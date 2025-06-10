@@ -6,7 +6,7 @@ Configuration settings for Intelligent Bidding Assistant
 import os
 from typing import Literal, Optional
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings # 继承自 Pydantic 的 BaseModel，并额外提供了从环境变量、.env 文件等加载配置的能力。
 from dotenv import load_dotenv
 
 # 加载环境变量
@@ -130,6 +130,15 @@ class Settings(BaseSettings):
         default="./logs/bidding_assistant.log",
         description="日志文件路径"
     )
+    
+    """
+    这个嵌套的 Config 类是 pydantic-settings 如何知道去哪里寻找配置的关键：
+    env_file = ".env": 告诉 BaseSettings 在加载配置时，首先去查找名为 .env 的文件。
+    env_file_encoding = "utf-8": 指定 .env 文件的编码格式。
+    case_sensitive = False: 表示在匹配环境变量名时不区分大小写。
+    例如，如果你在 .env 文件中定义了 OPENAI_API_KEY，pydantic-settings 也能识别
+    openai_api_key 这个字段，反之亦然。这增加了配置的灵活性。
+    """
     
     class Config:
         env_file = ".env"

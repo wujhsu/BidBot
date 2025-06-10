@@ -25,6 +25,9 @@ pypdf==5.5.0
 # Word 文档处理
 python-docx==1.1.2
 
+# 文档转换（可选）
+# docx2pdf==0.1.8
+
 # ===== 向量数据库 Vector Database =====
 chromadb==1.0.12
 
