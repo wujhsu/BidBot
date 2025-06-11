@@ -5,7 +5,7 @@ Output formatting node for the Langgraph workflow
 
 from typing import Dict, Any, List, Optional
 from loguru import logger
-from src.models.data_models import GraphState, GraphStateModel, ExtractedField, ScoringItem
+from src.models.data_models import GraphState, GraphStateModel, ExtractedField, ScoringItem, BidDocumentRequirements, BidEvaluationProcess
 from config.settings import settings
 import os
 from datetime import datetime
@@ -137,7 +137,73 @@ class OutputFormatter:
                 source = self._get_source_info(req)
                 markdown += f"{i}. {value} *({source})*\n"
             markdown += "\n"
-        
+
+        # 投标文件要求
+        markdown += "### 投标文件要求\n\n"
+
+        bid_doc_requirements = basic_info.bid_document_requirements
+
+        if bid_doc_requirements.composition_and_format:
+            markdown += "#### 组成与编制规范：\n"
+            for i, item in enumerate(bid_doc_requirements.composition_and_format, 1):
+                value = self._format_extracted_field(item)
+                source = self._get_source_info(item)
+                markdown += f"{i}. {value} *({source})*\n"
+            markdown += "\n"
+
+        if bid_doc_requirements.binding_and_sealing:
+            markdown += "#### 装订与密封要求：\n"
+            for i, item in enumerate(bid_doc_requirements.binding_and_sealing, 1):
+                value = self._format_extracted_field(item)
+                source = self._get_source_info(item)
+                markdown += f"{i}. {value} *({source})*\n"
+            markdown += "\n"
+
+        if bid_doc_requirements.signature_and_seal:
+            markdown += "#### 签字盖章要求：\n"
+            for i, item in enumerate(bid_doc_requirements.signature_and_seal, 1):
+                value = self._format_extracted_field(item)
+                source = self._get_source_info(item)
+                markdown += f"{i}. {value} *({source})*\n"
+            markdown += "\n"
+
+        if bid_doc_requirements.document_structure:
+            markdown += "#### 投标文件章节框架（目录）：\n"
+            for i, item in enumerate(bid_doc_requirements.document_structure, 1):
+                value = self._format_extracted_field(item)
+                source = self._get_source_info(item)
+                markdown += f"{i}. {value} *({source})*\n"
+            markdown += "\n"
+
+        # 开评定标流程
+        markdown += "### 开评定标流程\n\n"
+
+        bid_evaluation_process = basic_info.bid_evaluation_process
+
+        if bid_evaluation_process.bid_opening:
+            markdown += "#### 开标环节（时间、地点、程序）：\n"
+            for i, item in enumerate(bid_evaluation_process.bid_opening, 1):
+                value = self._format_extracted_field(item)
+                source = self._get_source_info(item)
+                markdown += f"{i}. {value} *({source})*\n"
+            markdown += "\n"
+
+        if bid_evaluation_process.evaluation:
+            markdown += "#### 评标环节（评委会、评审方法/标准、主要流程）：\n"
+            for i, item in enumerate(bid_evaluation_process.evaluation, 1):
+                value = self._format_extracted_field(item)
+                source = self._get_source_info(item)
+                markdown += f"{i}. {value} *({source})*\n"
+            markdown += "\n"
+
+        if bid_evaluation_process.award_decision:
+            markdown += "#### 定标环节（定标原则、中标通知）：\n"
+            for i, item in enumerate(bid_evaluation_process.award_decision, 1):
+                value = self._format_extracted_field(item)
+                source = self._get_source_info(item)
+                markdown += f"{i}. {value} *({source})*\n"
+            markdown += "\n"
+
         # 评分标准分析模块
         markdown += "---\n\n## 二、评分标准分析模块\n\n"
         
@@ -224,9 +290,18 @@ class OutputFormatter:
         
         # 其他重要信息模块
         markdown += "---\n\n## 三、其他重要信息模块\n\n"
-        
+
         other_info = result.other_information
-        
+
+        # 违约责任
+        if other_info.breach_liability:
+            markdown += "### 违约责任\n"
+            for i, liability in enumerate(other_info.breach_liability, 1):
+                value = self._format_extracted_field(liability)
+                source = self._get_source_info(liability)
+                markdown += f"{i}. {value} *({source})*\n"
+            markdown += "\n"
+
         # 合同主要条款
         if other_info.contract_terms:
             markdown += "### 合同主要条款/特殊约定\n"

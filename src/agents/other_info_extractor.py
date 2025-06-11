@@ -19,10 +19,49 @@ class OtherInfoExtractor:
     def __init__(self):
         """初始化其他信息提取器"""
         self.llm = LLMFactory.create_llm()
+        self.breach_liability_prompt = self._create_breach_liability_prompt()
         self.contract_prompt = self._create_contract_prompt()
         self.risk_prompt = self._create_risk_prompt()
         self.query_router = SmartQueryRouter()
-    
+
+    def _create_breach_liability_prompt(self) -> PromptTemplate:
+        """创建违约责任提取提示模板"""
+        template = """
+你是一个专业的招投标文件分析专家。请从以下文档片段中提取违约责任相关信息。
+
+文档片段：
+{document_chunks}
+
+请严格按照以下JSON格式提取信息：
+
+{{
+    "breach_liability": [
+        {{
+            "value": "违约责任的具体内容（按照原文提取，不要修改或总结）",
+            "source_text": "原文片段",
+            "confidence": 0.9
+        }}
+    ]
+}}
+
+提取要求：
+1. 重点关注以下关键词及其同义词：
+   - 违约责任、违约金、赔偿责任、损失赔偿
+   - 合同违约、履约违约、延期违约
+   - 责任承担、赔偿标准、违约处理
+   - 法律责任、经济责任
+
+2. 按照原文提取，保持原文的完整性和准确性
+3. 不要对原文进行总结、修改或重新表述
+4. 如果有多条违约责任条款，分别提取
+5. 如果文档中没有明确的违约责任条款，返回空数组[]
+6. 确保提取的内容与违约责任直接相关
+"""
+        return PromptTemplate(
+            input_variables=["document_chunks"],
+            template=template
+        )
+
     def _create_contract_prompt(self) -> PromptTemplate:
         """创建合同条款提取提示模板"""
         template = """
@@ -118,7 +157,83 @@ class OtherInfoExtractor:
             input_variables=["document_chunks"],
             template=template
         )
-    
+
+    def extract_breach_liability(self, state: GraphStateModel) -> GraphStateModel:
+        """
+        提取违约责任信息
+
+        Args:
+            state: 图状态
+
+        Returns:
+            GraphStateModel: 更新后的状态
+        """
+        try:
+            logger.info("开始提取违约责任信息")
+
+            if not state.vector_store:
+                raise ValueError("向量存储未初始化")
+
+            # 使用增强的检索策略
+            contextual_retriever = ContextualRetriever(state.vector_store)
+
+            # 构建违约责任查询
+            breach_liability_queries = [
+                "违约责任 违约金",
+                "赔偿责任 损失赔偿",
+                "合同违约 履约违约",
+                "责任承担 赔偿标准",
+                "法律责任 经济责任",
+                "违约处理 违约条款"
+            ]
+
+            # 多轮增强检索
+            enhanced_results = contextual_retriever.multi_round_retrieve(breach_liability_queries)
+
+            # 提取文档内容和元数据
+            relevant_chunks = []
+            breach_metadata_map = {}
+            breach_rag_docs = []
+            for doc, vec_score, rerank_score in enhanced_results:
+                chunk_content = doc.page_content
+                relevant_chunks.append(chunk_content)
+                # 保存文档内容与元数据的映射关系
+                breach_metadata_map[chunk_content] = doc.metadata
+                # 保存原始文档对象
+                breach_rag_docs.append(doc)
+                logger.debug(f"违约责任检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
+
+            # 限制长度
+            unique_chunks = list(set(relevant_chunks))[:10]
+            chunks_text = "\n\n---\n\n".join(unique_chunks)
+
+            # 保存文档元数据映射和RAG文档，供后续使用
+            self._breach_metadata_map = breach_metadata_map
+            # 更新最新的RAG文档列表
+            self._last_rag_docs = breach_rag_docs
+
+            logger.info(f"违约责任检索完成，使用 {len(unique_chunks)} 个文档片段")
+
+            # 调用LLM提取信息
+            prompt = self.breach_liability_prompt.format(document_chunks=chunks_text)
+            response = self.llm.invoke(prompt)
+
+            # 解析响应
+            breach_data = self._parse_llm_response(response.content if hasattr(response, 'content') else str(response))
+
+            # 更新状态
+            if breach_data:
+                self._update_breach_liability(state, breach_data)
+
+            logger.info("违约责任信息提取完成")
+
+        except Exception as e:
+            error_msg = f"违约责任信息提取失败: {str(e)}"
+            logger.error(error_msg)
+            state.error_messages.append(error_msg)
+
+        return state
+
     def extract_contract_info(self, state: GraphStateModel) -> GraphStateModel:
         """
         提取合同相关信息
@@ -313,7 +428,54 @@ class OtherInfoExtractor:
                     return page_number
 
         return None
-    
+
+    def _update_breach_liability(self, state: GraphStateModel, data: dict) -> None:
+        """更新违约责任信息"""
+        other_info = state.analysis_result.other_information
+
+        if 'breach_liability' in data and isinstance(data['breach_liability'], list):
+            breach_liability_fields = []
+            for item in data['breach_liability']:
+                if isinstance(item, dict) and 'value' in item:
+                    source_text = item.get('source_text', '')
+
+                    # 多层次页码提取策略
+                    page_number = None
+
+                    # 1. 优先从item中获取页码
+                    page_number = item.get('page_number')
+
+                    # 2. 从文档元数据映射中获取页码信息
+                    if not page_number and hasattr(self, '_breach_metadata_map') and source_text:
+                        for doc_content, metadata in self._breach_metadata_map.items():
+                            if source_text in doc_content:
+                                page_number = metadata.get('page_number')
+                                break
+
+                    # 3. 从来源文本中提取页码标记
+                    if not page_number:
+                        page_number = self._extract_page_number(source_text)
+
+                    # 4. 从RAG检索的文档中提取页码（如果有的话）
+                    if not page_number and hasattr(self, '_last_rag_docs'):
+                        page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+                    # 5. 如果仍然没有页码，记录警告并设置默认值
+                    if not page_number:
+                        logger.warning(f"无法为违约责任提取页码信息，来源文本: {source_text[:50]}...")
+                        page_number = 1  # 设置默认页码为1
+
+                    breach_liability_field = ExtractedField(
+                        value=item.get('value'),
+                        source=DocumentSource(
+                            source_text=source_text,
+                            page_number=page_number
+                        ),
+                        confidence=item.get('confidence', 0.5)
+                    )
+                    breach_liability_fields.append(breach_liability_field)
+            other_info.breach_liability = breach_liability_fields
+
     def _update_contract_info(self, state: GraphStateModel, data: dict) -> None:
         """更新合同信息"""
         other_info = state.analysis_result.other_information
@@ -444,6 +606,7 @@ def create_other_info_extractor_node():
         graph_state = GraphStateModel(**state)
         
         # 执行其他信息提取
+        graph_state = extractor.extract_breach_liability(graph_state)
         graph_state = extractor.extract_contract_info(graph_state)
         graph_state = extractor.identify_risks(graph_state)
         

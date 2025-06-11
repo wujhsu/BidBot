@@ -28,6 +28,19 @@ class QualificationCriteria(BaseModel):
     team_requirements: List[ExtractedField] = Field(default_factory=list, description="项目团队人员要求")
     other_requirements: List[ExtractedField] = Field(default_factory=list, description="其他硬性要求")
 
+class BidDocumentRequirements(BaseModel):
+    """投标文件要求"""
+    composition_and_format: List[ExtractedField] = Field(default_factory=list, description="组成与编制规范")
+    binding_and_sealing: List[ExtractedField] = Field(default_factory=list, description="装订与密封要求")
+    signature_and_seal: List[ExtractedField] = Field(default_factory=list, description="签字盖章要求")
+    document_structure: List[ExtractedField] = Field(default_factory=list, description="投标文件章节框架（目录）")
+
+class BidEvaluationProcess(BaseModel):
+    """开评定标流程"""
+    bid_opening: List[ExtractedField] = Field(default_factory=list, description="开标环节（时间、地点、程序）")
+    evaluation: List[ExtractedField] = Field(default_factory=list, description="评标环节（评委会、评审方法/标准、主要流程）")
+    award_decision: List[ExtractedField] = Field(default_factory=list, description="定标环节（定标原则、中标通知）")
+
 class BasicInformation(BaseModel):
     """基础信息模块"""
     project_name: ExtractedField = Field(default_factory=ExtractedField, description="项目名称")
@@ -42,6 +55,8 @@ class BasicInformation(BaseModel):
     agent_name: ExtractedField = Field(default_factory=ExtractedField, description="采购代理机构名称")
     agent_contact: ExtractedField = Field(default_factory=ExtractedField, description="采购代理机构联系人及联系方式")
     qualification_criteria: QualificationCriteria = Field(default_factory=QualificationCriteria, description="资格审查硬性条件")
+    bid_document_requirements: BidDocumentRequirements = Field(default_factory=BidDocumentRequirements, description="投标文件要求")
+    bid_evaluation_process: BidEvaluationProcess = Field(default_factory=BidEvaluationProcess, description="开评定标流程")
 
 class ScoreComposition(BaseModel):
     """分值构成"""
@@ -69,6 +84,7 @@ class ScoringCriteria(BaseModel):
 
 class OtherInformation(BaseModel):
     """其他重要信息模块"""
+    breach_liability: List[ExtractedField] = Field(default_factory=list, description="违约责任")
     contract_terms: List[ExtractedField] = Field(default_factory=list, description="合同主要条款/特殊约定")
     payment_terms: ExtractedField = Field(default_factory=ExtractedField, description="付款方式与周期")
     delivery_requirements: ExtractedField = Field(default_factory=ExtractedField, description="项目完成期限/交付要求")
