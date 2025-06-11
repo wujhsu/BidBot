@@ -185,19 +185,23 @@ class BasicInfoExtractor:
             # 提取文档内容和元数据
             relevant_chunks = []
             doc_metadata_map = {}
+            rag_docs = []
             for doc, vec_score, rerank_score in enhanced_results:
                 chunk_content = doc.page_content
                 relevant_chunks.append(chunk_content)
                 # 保存文档内容与元数据的映射关系
                 doc_metadata_map[chunk_content] = doc.metadata
+                # 保存原始文档对象
+                rag_docs.append(doc)
                 logger.debug(f"基础信息检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
 
             # 限制长度
             unique_chunks = list(set(relevant_chunks))[:10]
             chunks_text = "\n\n---\n\n".join(unique_chunks)
 
-            # 保存文档元数据映射，供后续使用
+            # 保存文档元数据映射和RAG文档，供后续使用
             self._doc_metadata_map = doc_metadata_map
+            self._last_rag_docs = rag_docs
 
             logger.info(f"基础信息检索完成，使用 {len(unique_chunks)} 个文档片段")
             
@@ -257,19 +261,24 @@ class BasicInfoExtractor:
             # 提取文档内容和元数据
             relevant_chunks = []
             qualification_metadata_map = {}
+            qualification_rag_docs = []
             for doc, vec_score, rerank_score in enhanced_results:
                 chunk_content = doc.page_content
                 relevant_chunks.append(chunk_content)
                 # 保存文档内容与元数据的映射关系
                 qualification_metadata_map[chunk_content] = doc.metadata
+                # 保存原始文档对象
+                qualification_rag_docs.append(doc)
                 logger.debug(f"资格审查检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
 
             # 限制长度
             unique_chunks = list(set(relevant_chunks))[:10]
             chunks_text = "\n\n---\n\n".join(unique_chunks)
 
-            # 保存文档元数据映射，供后续使用
+            # 保存文档元数据映射和RAG文档，供后续使用
             self._qualification_metadata_map = qualification_metadata_map
+            # 更新最新的RAG文档列表
+            self._last_rag_docs = qualification_rag_docs
 
             logger.info(f"资格审查检索完成，使用 {len(unique_chunks)} 个文档片段")
             
@@ -350,6 +359,27 @@ class BasicInfoExtractor:
                 pass
 
         return None
+
+    def _extract_page_from_rag_docs(self, rag_docs: List) -> Optional[int]:
+        """从RAG检索的文档中提取页码信息"""
+        if not rag_docs:
+            return None
+
+        # 遍历所有检索到的文档，寻找页码信息
+        for doc in rag_docs:
+            # 检查文档元数据中的页码信息
+            if hasattr(doc, 'metadata') and doc.metadata:
+                page_number = doc.metadata.get('page_number')
+                if page_number:
+                    return page_number
+
+            # 检查文档内容中的页码标记
+            if hasattr(doc, 'page_content'):
+                page_number = self._extract_page_number(doc.page_content)
+                if page_number:
+                    return page_number
+
+        return None
     
     def _update_basic_info(self, state: GraphStateModel, data: dict) -> None:
         """更新基础信息"""
@@ -357,18 +387,31 @@ class BasicInfoExtractor:
             if isinstance(field_data, dict) and 'value' in field_data:
                 source_text = field_data.get('source_text', '')
 
-                # 尝试从文档元数据映射中获取页码信息
+                # 多层次页码提取策略
                 page_number = None
-                if hasattr(self, '_doc_metadata_map') and source_text:
-                    # 查找包含此来源文本的文档
+
+                # 1. 优先从field_data中获取页码
+                page_number = field_data.get('page_number')
+
+                # 2. 从文档元数据映射中获取页码信息
+                if not page_number and hasattr(self, '_doc_metadata_map') and source_text:
                     for doc_content, metadata in self._doc_metadata_map.items():
                         if source_text in doc_content:
                             page_number = metadata.get('page_number')
                             break
 
-                # 如果没有找到，则从文本中提取
+                # 3. 从来源文本中提取页码标记
                 if not page_number:
-                    page_number = field_data.get('page_number') or self._extract_page_number(source_text)
+                    page_number = self._extract_page_number(source_text)
+
+                # 4. 从RAG检索的文档中提取页码（如果有的话）
+                if not page_number and hasattr(self, '_last_rag_docs'):
+                    page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+                # 5. 如果仍然没有页码，记录警告并设置默认值
+                if not page_number:
+                    logger.warning(f"无法为字段 {field_name} 提取页码信息，来源文本: {source_text[:50]}...")
+                    page_number = 1  # 设置默认页码为1
 
                 extracted_field = ExtractedField(
                     value=field_data.get('value'),
@@ -391,18 +434,31 @@ class BasicInfoExtractor:
                     if isinstance(item, dict) and 'value' in item:
                         source_text = item.get('source_text', '')
 
-                        # 尝试从文档元数据映射中获取页码信息
+                        # 多层次页码提取策略
                         page_number = None
-                        if hasattr(self, '_qualification_metadata_map') and source_text:
-                            # 查找包含此来源文本的文档
+
+                        # 1. 优先从item中获取页码
+                        page_number = item.get('page_number')
+
+                        # 2. 从文档元数据映射中获取页码信息
+                        if not page_number and hasattr(self, '_qualification_metadata_map') and source_text:
                             for doc_content, metadata in self._qualification_metadata_map.items():
                                 if source_text in doc_content:
                                     page_number = metadata.get('page_number')
                                     break
 
-                        # 如果没有找到，则从文本中提取
+                        # 3. 从来源文本中提取页码标记
                         if not page_number:
-                            page_number = item.get('page_number') or self._extract_page_number(source_text)
+                            page_number = self._extract_page_number(source_text)
+
+                        # 4. 从RAG检索的文档中提取页码（如果有的话）
+                        if not page_number and hasattr(self, '_last_rag_docs'):
+                            page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+                        # 5. 如果仍然没有页码，记录警告并设置默认值
+                        if not page_number:
+                            logger.warning(f"无法为资格审查项 {category} 提取页码信息，来源文本: {source_text[:50]}...")
+                            page_number = 1  # 设置默认页码为1
 
                         extracted_field = ExtractedField(
                             value=item.get('value'),

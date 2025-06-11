@@ -143,13 +143,19 @@ class OtherInfoExtractor:
 
             # 提取文档内容
             relevant_chunks = []
+            contract_rag_docs = []
             for doc, vec_score, rerank_score in enhanced_results:
                 relevant_chunks.append(doc.page_content)
+                # 保存原始文档对象
+                contract_rag_docs.append(doc)
                 logger.debug(f"合同信息检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
-            
+
             # 去重并限制长度
             unique_chunks = list(set(relevant_chunks))[:12]
             chunks_text = "\n\n---\n\n".join(unique_chunks)
+
+            # 保存RAG文档，供后续使用
+            self._last_rag_docs = contract_rag_docs
             
             # 调用LLM提取信息
             prompt = self.contract_prompt.format(document_chunks=chunks_text)
@@ -195,13 +201,19 @@ class OtherInfoExtractor:
 
             # 提取文档内容
             relevant_chunks = []
+            risk_rag_docs = []
             for doc, vec_score, rerank_score in enhanced_results:
                 relevant_chunks.append(doc.page_content)
+                # 保存原始文档对象
+                risk_rag_docs.append(doc)
                 logger.debug(f"风险识别检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
-            
+
             # 去重并限制长度
             unique_chunks = list(set(relevant_chunks))[:15]
             chunks_text = "\n\n---\n\n".join(unique_chunks)
+
+            # 保存RAG文档，供后续使用
+            self._last_rag_docs = risk_rag_docs
             
             # 调用LLM识别风险
             prompt = self.risk_prompt.format(document_chunks=chunks_text)
@@ -280,18 +292,57 @@ class OtherInfoExtractor:
                 pass
 
         return None
+
+    def _extract_page_from_rag_docs(self, rag_docs: List) -> Optional[int]:
+        """从RAG检索的文档中提取页码信息"""
+        if not rag_docs:
+            return None
+
+        # 遍历所有检索到的文档，寻找页码信息
+        for doc in rag_docs:
+            # 检查文档元数据中的页码信息
+            if hasattr(doc, 'metadata') and doc.metadata:
+                page_number = doc.metadata.get('page_number')
+                if page_number:
+                    return page_number
+
+            # 检查文档内容中的页码标记
+            if hasattr(doc, 'page_content'):
+                page_number = self._extract_page_number(doc.page_content)
+                if page_number:
+                    return page_number
+
+        return None
     
     def _update_contract_info(self, state: GraphStateModel, data: dict) -> None:
         """更新合同信息"""
         other_info = state.analysis_result.other_information
-        
+
         # 更新合同条款
         if 'contract_terms' in data and isinstance(data['contract_terms'], list):
             contract_terms = []
             for item in data['contract_terms']:
                 if isinstance(item, dict) and 'value' in item:
                     source_text = item.get('source_text', '')
-                    page_number = self._extract_page_number(source_text)
+
+                    # 多层次页码提取策略
+                    page_number = None
+
+                    # 1. 优先从item中获取页码
+                    page_number = item.get('page_number')
+
+                    # 2. 从来源文本中提取页码标记
+                    if not page_number:
+                        page_number = self._extract_page_number(source_text)
+
+                    # 3. 从RAG检索的文档中提取页码（如果有的话）
+                    if not page_number and hasattr(self, '_last_rag_docs'):
+                        page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+                    # 4. 如果仍然没有页码，记录警告并设置默认值
+                    if not page_number:
+                        logger.warning(f"无法为合同条款提取页码信息，来源文本: {source_text[:50]}...")
+                        page_number = 1  # 设置默认页码为1
 
                     contract_terms.append(ExtractedField(
                         value=item.get('value'),
@@ -302,18 +353,36 @@ class OtherInfoExtractor:
                         confidence=item.get('confidence', 0.5)
                     ))
             other_info.contract_terms = contract_terms
-        
+
         # 更新其他单项信息
         single_fields = [
             'payment_terms', 'delivery_requirements', 'bid_validity',
             'intellectual_property', 'confidentiality'
         ]
-        
+
         for field_name in single_fields:
             if field_name in data and isinstance(data[field_name], dict):
                 field_data = data[field_name]
                 source_text = field_data.get('source_text', '')
-                page_number = self._extract_page_number(source_text)
+
+                # 多层次页码提取策略
+                page_number = None
+
+                # 1. 优先从field_data中获取页码
+                page_number = field_data.get('page_number')
+
+                # 2. 从来源文本中提取页码标记
+                if not page_number:
+                    page_number = self._extract_page_number(source_text)
+
+                # 3. 从RAG检索的文档中提取页码（如果有的话）
+                if not page_number and hasattr(self, '_last_rag_docs'):
+                    page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+                # 4. 如果仍然没有页码，记录警告并设置默认值
+                if not page_number:
+                    logger.warning(f"无法为字段 {field_name} 提取页码信息，来源文本: {source_text[:50]}...")
+                    page_number = 1  # 设置默认页码为1
 
                 setattr(other_info, field_name, ExtractedField(
                     value=field_data.get('value'),
@@ -327,12 +396,30 @@ class OtherInfoExtractor:
     def _update_risk_warnings(self, state: GraphStateModel, risk_warnings: List[dict]) -> None:
         """更新风险警告"""
         other_info = state.analysis_result.other_information
-        
+
         risk_fields = []
         for item in risk_warnings:
             if isinstance(item, dict) and 'value' in item:
                 source_text = item.get('source_text', '')
-                page_number = self._extract_page_number(source_text)
+
+                # 多层次页码提取策略
+                page_number = None
+
+                # 1. 优先从item中获取页码
+                page_number = item.get('page_number')
+
+                # 2. 从来源文本中提取页码标记
+                if not page_number:
+                    page_number = self._extract_page_number(source_text)
+
+                # 3. 从RAG检索的文档中提取页码（如果有的话）
+                if not page_number and hasattr(self, '_last_rag_docs'):
+                    page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+                # 4. 如果仍然没有页码，记录警告并设置默认值
+                if not page_number:
+                    logger.warning(f"无法为风险警告提取页码信息，来源文本: {source_text[:50]}...")
+                    page_number = 1  # 设置默认页码为1
 
                 risk_field = ExtractedField(
                     value=item.get('value'),
@@ -344,7 +431,7 @@ class OtherInfoExtractor:
                     notes=item.get('notes')
                 )
                 risk_fields.append(risk_field)
-        
+
         other_info.risk_warnings = risk_fields
 
 def create_other_info_extractor_node():

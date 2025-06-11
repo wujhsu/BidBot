@@ -172,12 +172,18 @@ class ScoringAnalyzer:
 
             # 提取文档内容
             relevant_chunks = []
+            scoring_rag_docs = []
             for doc, vec_score, rerank_score in enhanced_results:
                 relevant_chunks.append(doc.page_content)
+                # 保存原始文档对象
+                scoring_rag_docs.append(doc)
                 logger.debug(f"检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
 
             # 不过度限制文档数量，保留更多信息
             chunks_text = "\n\n---\n\n".join(relevant_chunks)
+
+            # 保存RAG文档，供后续使用
+            self._last_rag_docs = scoring_rag_docs
 
             logger.info(f"评分标准检索完成，使用 {len(relevant_chunks)} 个文档片段")
             
@@ -225,12 +231,18 @@ class ScoringAnalyzer:
 
             # 提取文档内容
             relevant_chunks = []
+            detailed_rag_docs = []
             for doc, vec_score, rerank_score in enhanced_results:
                 relevant_chunks.append(doc.page_content)
+                # 保存原始文档对象
+                detailed_rag_docs.append(doc)
                 logger.debug(f"详细评分检索到文档片段，向量分数: {vec_score:.3f}, 重排序分数: {rerank_score:.3f}")
 
             # 保留更多文档信息
             chunks_text = "\n\n---\n\n".join(relevant_chunks)
+
+            # 保存RAG文档，供后续使用
+            self._last_rag_docs = detailed_rag_docs
 
             logger.info(f"详细评分检索完成，使用 {len(relevant_chunks)} 个文档片段")
             
@@ -311,6 +323,27 @@ class ScoringAnalyzer:
                 pass
 
         return None
+
+    def _extract_page_from_rag_docs(self, rag_docs: List) -> Optional[int]:
+        """从RAG检索的文档中提取页码信息"""
+        if not rag_docs:
+            return None
+
+        # 遍历所有检索到的文档，寻找页码信息
+        for doc in rag_docs:
+            # 检查文档元数据中的页码信息
+            if hasattr(doc, 'metadata') and doc.metadata:
+                page_number = doc.metadata.get('page_number')
+                if page_number:
+                    return page_number
+
+            # 检查文档内容中的页码标记
+            if hasattr(doc, 'page_content'):
+                page_number = self._extract_page_number(doc.page_content)
+                if page_number:
+                    return page_number
+
+        return None
     
     def _update_scoring_criteria(self, state: GraphStateModel, data: dict) -> None:
         """更新评分标准"""
@@ -322,7 +355,25 @@ class ScoringAnalyzer:
             for item in data['preliminary_review']:
                 if isinstance(item, dict) and 'value' in item:
                     source_text = item.get('source_text', '')
-                    page_number = self._extract_page_number(source_text)
+
+                    # 多层次页码提取策略
+                    page_number = None
+
+                    # 1. 优先从item中获取页码
+                    page_number = item.get('page_number')
+
+                    # 2. 从来源文本中提取页码标记
+                    if not page_number:
+                        page_number = self._extract_page_number(source_text)
+
+                    # 3. 从RAG检索的文档中提取页码（如果有的话）
+                    if not page_number and hasattr(self, '_last_rag_docs'):
+                        page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+                    # 4. 如果仍然没有页码，记录警告并设置默认值
+                    if not page_number:
+                        logger.warning(f"无法为初步评审标准提取页码信息，来源文本: {source_text[:50]}...")
+                        page_number = 1  # 设置默认页码为1
 
                     preliminary_review.append(ExtractedField(
                         value=item.get('value'),
@@ -333,12 +384,30 @@ class ScoringAnalyzer:
                         confidence=item.get('confidence', 0.5)
                     ))
             scoring_criteria.preliminary_review = preliminary_review
-        
+
         # 更新评审方法
         if 'evaluation_method' in data and isinstance(data['evaluation_method'], dict):
             method_data = data['evaluation_method']
             source_text = method_data.get('source_text', '')
-            page_number = self._extract_page_number(source_text)
+
+            # 多层次页码提取策略
+            page_number = None
+
+            # 1. 优先从method_data中获取页码
+            page_number = method_data.get('page_number')
+
+            # 2. 从来源文本中提取页码标记
+            if not page_number:
+                page_number = self._extract_page_number(source_text)
+
+            # 3. 从RAG检索的文档中提取页码（如果有的话）
+            if not page_number and hasattr(self, '_last_rag_docs'):
+                page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+            # 4. 如果仍然没有页码，记录警告并设置默认值
+            if not page_number:
+                logger.warning(f"无法为评审方法提取页码信息，来源文本: {source_text[:50]}...")
+                page_number = 1  # 设置默认页码为1
 
             scoring_criteria.evaluation_method = ExtractedField(
                 value=method_data.get('value'),
@@ -358,7 +427,25 @@ class ScoringAnalyzer:
                 if field_name in comp_data and isinstance(comp_data[field_name], dict):
                     field_data = comp_data[field_name]
                     source_text = field_data.get('source_text', '')
-                    page_number = self._extract_page_number(source_text)
+
+                    # 多层次页码提取策略
+                    page_number = None
+
+                    # 1. 优先从field_data中获取页码
+                    page_number = field_data.get('page_number')
+
+                    # 2. 从来源文本中提取页码标记
+                    if not page_number:
+                        page_number = self._extract_page_number(source_text)
+
+                    # 3. 从RAG检索的文档中提取页码（如果有的话）
+                    if not page_number and hasattr(self, '_last_rag_docs'):
+                        page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+                    # 4. 如果仍然没有页码，记录警告并设置默认值
+                    if not page_number:
+                        logger.warning(f"无法为分值构成 {field_name} 提取页码信息，来源文本: {source_text[:50]}...")
+                        page_number = 1  # 设置默认页码为1
 
                     setattr(score_comp, field_name, ExtractedField(
                         value=field_data.get('value'),
@@ -395,7 +482,25 @@ class ScoringAnalyzer:
                 for item in data[field_name]:
                     if isinstance(item, dict) and 'value' in item:
                         source_text = item.get('source_text', '')
-                        page_number = self._extract_page_number(source_text)
+
+                        # 多层次页码提取策略
+                        page_number = None
+
+                        # 1. 优先从item中获取页码
+                        page_number = item.get('page_number')
+
+                        # 2. 从来源文本中提取页码标记
+                        if not page_number:
+                            page_number = self._extract_page_number(source_text)
+
+                        # 3. 从RAG检索的文档中提取页码（如果有的话）
+                        if not page_number and hasattr(self, '_last_rag_docs'):
+                            page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+                        # 4. 如果仍然没有页码，记录警告并设置默认值
+                        if not page_number:
+                            logger.warning(f"无法为 {field_name} 提取页码信息，来源文本: {source_text[:50]}...")
+                            page_number = 1  # 设置默认页码为1
 
                         field_items.append(ExtractedField(
                             value=item.get('value'),
@@ -427,7 +532,25 @@ class ScoringAnalyzer:
                             pass
 
                 source_text = item.get('source_text', '')
-                page_number = self._extract_page_number(source_text)
+
+                # 多层次页码提取策略
+                page_number = None
+
+                # 1. 优先从item中获取页码
+                page_number = item.get('page_number')
+
+                # 2. 从来源文本中提取页码标记
+                if not page_number:
+                    page_number = self._extract_page_number(source_text)
+
+                # 3. 从RAG检索的文档中提取页码（如果有的话）
+                if not page_number and hasattr(self, '_last_rag_docs'):
+                    page_number = self._extract_page_from_rag_docs(self._last_rag_docs)
+
+                # 4. 如果仍然没有页码，记录警告并设置默认值
+                if not page_number:
+                    logger.warning(f"无法为详细评分项 {item.get('item_name', '')} 提取页码信息，来源文本: {source_text[:50]}...")
+                    page_number = 1  # 设置默认页码为1
 
                 scoring_item = ScoringItem(
                     category=item.get('category', ''),

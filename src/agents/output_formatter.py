@@ -3,9 +3,9 @@
 Output formatting node for the Langgraph workflow
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from loguru import logger
-from src.models.data_models import GraphState, GraphStateModel, ExtractedField
+from src.models.data_models import GraphState, GraphStateModel, ExtractedField, ScoringItem
 from config.settings import settings
 import os
 from datetime import datetime
@@ -293,9 +293,18 @@ class OutputFormatter:
         # 构建来源信息
         source_parts = []
 
-        # 添加页码信息（如果有）
-        if field.source.page_number:
-            source_parts.append(f"第{field.source.page_number}页")
+        # 强制添加页码信息
+        page_number = field.source.page_number
+        if not page_number:
+            # 如果没有页码，尝试从来源文本中提取
+            page_number = self._extract_page_number_from_source(field.source.source_text)
+
+        # 如果仍然没有页码，设置默认值并记录警告
+        if not page_number:
+            logger.warning(f"来源信息缺少页码，使用默认值1，来源文本: {field.source.source_text[:50]}...")
+            page_number = 1
+
+        source_parts.append(f"第{page_number}页")
 
         # 添加章节信息（如果有）
         if field.source.section:
@@ -306,12 +315,26 @@ class OutputFormatter:
         if len(field.source.source_text) > 50:
             source_text += "..."
 
-        # 组合来源信息
-        location_info = " | ".join(source_parts) if source_parts else ""
-        if location_info:
-            return f"{location_info} | 原文: {source_text}"
-        else:
-            return f"原文: {source_text}"
+        # 组合来源信息，确保页码信息始终存在
+        location_info = " ｜ ".join(source_parts)
+        return f"{location_info} ｜ 原文: {source_text}"
+
+    def _extract_page_number_from_source(self, source_text: str) -> Optional[int]:
+        """从来源文本中提取页码信息"""
+        if not source_text:
+            return None
+
+        import re
+        # 查找页码标记模式：--- 第X页 ---
+        page_pattern = r'--- 第(\d+)页 ---'
+        match = re.search(page_pattern, source_text)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                pass
+
+        return None
 
     def _clean_table_content(self, content: str) -> str:
         """清理表格内容，避免换行符等特殊字符导致的格式问题"""
