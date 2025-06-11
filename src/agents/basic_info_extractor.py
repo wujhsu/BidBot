@@ -677,7 +677,7 @@ class BasicInfoExtractor:
                 # 5. 如果仍然没有页码，记录警告并设置默认值
                 if not page_number:
                     logger.warning(f"无法为字段 {field_name} 提取页码信息，来源文本: {source_text[:50]}...")
-                    page_number = 1  # 设置默认页码为1
+                    page_number = -1  # 设置默认页码为-1
 
                 extracted_field = ExtractedField(
                     value=field_data.get('value'),
@@ -724,7 +724,7 @@ class BasicInfoExtractor:
                         # 5. 如果仍然没有页码，记录警告并设置默认值
                         if not page_number:
                             logger.warning(f"无法为资格审查项 {category} 提取页码信息，来源文本: {source_text[:50]}...")
-                            page_number = 1  # 设置默认页码为1
+                            page_number = -1  # 设置默认页码为-1
 
                         extracted_field = ExtractedField(
                             value=item.get('value'),
@@ -772,7 +772,7 @@ class BasicInfoExtractor:
                         # 5. 如果仍然没有页码，记录警告并设置默认值
                         if not page_number:
                             logger.warning(f"无法为投标文件要求项 {category} 提取页码信息，来源文本: {source_text[:50]}...")
-                            page_number = 1  # 设置默认页码为1
+                            page_number = -1  # 设置默认页码为-1
 
                         extracted_field = ExtractedField(
                             value=item.get('value'),
@@ -820,7 +820,7 @@ class BasicInfoExtractor:
                         # 5. 如果仍然没有页码，记录警告并设置默认值
                         if not page_number:
                             logger.warning(f"无法为开评定标流程项 {category} 提取页码信息，来源文本: {source_text[:50]}...")
-                            page_number = 1  # 设置默认页码为1
+                            page_number = -1  # 设置默认页码为-1
 
                         extracted_field = ExtractedField(
                             value=item.get('value'),

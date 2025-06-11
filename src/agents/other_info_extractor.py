@@ -463,7 +463,7 @@ class OtherInfoExtractor:
                     # 5. 如果仍然没有页码，记录警告并设置默认值
                     if not page_number:
                         logger.warning(f"无法为违约责任提取页码信息，来源文本: {source_text[:50]}...")
-                        page_number = 1  # 设置默认页码为1
+                        page_number = -1  # 设置默认页码为-1
 
                     breach_liability_field = ExtractedField(
                         value=item.get('value'),
@@ -504,7 +504,7 @@ class OtherInfoExtractor:
                     # 4. 如果仍然没有页码，记录警告并设置默认值
                     if not page_number:
                         logger.warning(f"无法为合同条款提取页码信息，来源文本: {source_text[:50]}...")
-                        page_number = 1  # 设置默认页码为1
+                        page_number = -1  # 设置默认页码为-1
 
                     contract_terms.append(ExtractedField(
                         value=item.get('value'),
@@ -544,7 +544,7 @@ class OtherInfoExtractor:
                 # 4. 如果仍然没有页码，记录警告并设置默认值
                 if not page_number:
                     logger.warning(f"无法为字段 {field_name} 提取页码信息，来源文本: {source_text[:50]}...")
-                    page_number = 1  # 设置默认页码为1
+                    page_number = -1  # 设置默认页码为-1
 
                 setattr(other_info, field_name, ExtractedField(
                     value=field_data.get('value'),
@@ -581,7 +581,7 @@ class OtherInfoExtractor:
                 # 4. 如果仍然没有页码，记录警告并设置默认值
                 if not page_number:
                     logger.warning(f"无法为风险警告提取页码信息，来源文本: {source_text[:50]}...")
-                    page_number = 1  # 设置默认页码为1
+                    page_number = -1  # 设置默认页码为-1
 
                 risk_field = ExtractedField(
                     value=item.get('value'),

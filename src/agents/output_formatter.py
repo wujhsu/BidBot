@@ -341,8 +341,13 @@ class OutputFormatter:
             markdown += "\n"
         
         # 处理说明
+        markdown += "---\n\n## 处理说明\n\n"
+
+        # 添加页码说明
+        markdown += "- **页码说明**：第-1页表示该信息的具体页码无法确定，可能是由于文档处理过程中页码信息丢失或LLM提取时未包含页码标记\n"
+
+        # 添加其他处理说明
         if result.processing_notes:
-            markdown += "---\n\n## 处理说明\n\n"
             for note in result.processing_notes:
                 markdown += f"- {note}\n"
         
@@ -362,7 +367,12 @@ class OutputFormatter:
     
     def _get_source_info(self, field: ExtractedField) -> str:
         """获取来源信息"""
+        # 如果字段不存在或没有来源信息，返回来源未知
         if not field or not field.source or not field.source.source_text:
+            return "来源未知"
+
+        # 如果字段值为"招标文件中未提及"，返回来源未知
+        if field.value and "招标文件中未提及" in field.value:
             return "来源未知"
 
         # 构建来源信息
@@ -376,8 +386,8 @@ class OutputFormatter:
 
         # 如果仍然没有页码，设置默认值并记录警告
         if not page_number:
-            logger.warning(f"来源信息缺少页码，使用默认值1，来源文本: {field.source.source_text[:50]}...")
-            page_number = 1
+            logger.warning(f"来源信息缺少页码，使用默认值-1，来源文本: {field.source.source_text[:50]}...")
+            page_number = -1
 
         source_parts.append(f"第{page_number}页")
 

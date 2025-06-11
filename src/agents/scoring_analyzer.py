@@ -373,7 +373,7 @@ class ScoringAnalyzer:
                     # 4. 如果仍然没有页码，记录警告并设置默认值
                     if not page_number:
                         logger.warning(f"无法为初步评审标准提取页码信息，来源文本: {source_text[:50]}...")
-                        page_number = 1  # 设置默认页码为1
+                        page_number = -1  # 设置默认页码为-1
 
                     preliminary_review.append(ExtractedField(
                         value=item.get('value'),
@@ -407,7 +407,7 @@ class ScoringAnalyzer:
             # 4. 如果仍然没有页码，记录警告并设置默认值
             if not page_number:
                 logger.warning(f"无法为评审方法提取页码信息，来源文本: {source_text[:50]}...")
-                page_number = 1  # 设置默认页码为1
+                page_number = -1  # 设置默认页码为-1
 
             scoring_criteria.evaluation_method = ExtractedField(
                 value=method_data.get('value'),
@@ -445,7 +445,7 @@ class ScoringAnalyzer:
                     # 4. 如果仍然没有页码，记录警告并设置默认值
                     if not page_number:
                         logger.warning(f"无法为分值构成 {field_name} 提取页码信息，来源文本: {source_text[:50]}...")
-                        page_number = 1  # 设置默认页码为1
+                        page_number = -1  # 设置默认页码为-1
 
                     setattr(score_comp, field_name, ExtractedField(
                         value=field_data.get('value'),
@@ -500,7 +500,7 @@ class ScoringAnalyzer:
                         # 4. 如果仍然没有页码，记录警告并设置默认值
                         if not page_number:
                             logger.warning(f"无法为 {field_name} 提取页码信息，来源文本: {source_text[:50]}...")
-                            page_number = 1  # 设置默认页码为1
+                            page_number = -1  # 设置默认页码为-1
 
                         field_items.append(ExtractedField(
                             value=item.get('value'),
@@ -550,7 +550,7 @@ class ScoringAnalyzer:
                 # 4. 如果仍然没有页码，记录警告并设置默认值
                 if not page_number:
                     logger.warning(f"无法为详细评分项 {item.get('item_name', '')} 提取页码信息，来源文本: {source_text[:50]}...")
-                    page_number = 1  # 设置默认页码为1
+                    page_number = -1  # 设置默认页码为-1
 
                 scoring_item = ScoringItem(
                     category=item.get('category', ''),
