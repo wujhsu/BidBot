@@ -3,7 +3,7 @@
 Langgraph workflow definition for the Intelligent Bidding Assistant
 """
 
-from typing import Dict, Any, Literal
+from typing import Dict, Any, Literal, Optional, Callable
 from langgraph.graph import StateGraph, END
 from loguru import logger
 from src.models.data_models import GraphState, GraphStateModel
@@ -20,6 +20,7 @@ class BiddingAnalysisGraph:
     def __init__(self):
         """初始化分析图"""
         self.graph = self._create_graph()
+        self.progress_callback: Optional[Callable[[str], None]] = None
     
     def _create_graph(self) -> StateGraph:
         """创建Langgraph工作流图"""
@@ -80,13 +81,20 @@ class BiddingAnalysisGraph:
         workflow.add_edge("error_handler", END)
         
         return workflow.compile()
-    
+
+    def _update_progress(self, step: str) -> None:
+        """更新进度"""
+        if self.progress_callback:
+            self.progress_callback(step)
+
     def _route_after_document_processing(self, state: Dict[str, Any]) -> Literal["continue", "error"]:
         """文档处理后的路由决策"""
         current_step = state.get("current_step", "")
         if current_step == "error":
             return "error"
         elif current_step in ["document_processed", "document_validated", "structure_extracted"]:
+            # 更新进度到基础信息提取
+            self._update_progress("basic_info_extractor")
             return "continue"
         else:
             logger.warning(f"未知的文档处理状态: {current_step}")
@@ -98,6 +106,8 @@ class BiddingAnalysisGraph:
         if current_step == "error":
             return "error"
         elif current_step == "basic_info_extracted":
+            # 更新进度到评分分析
+            self._update_progress("scoring_analyzer")
             return "continue"
         else:
             logger.warning(f"未知的基础信息提取状态: {current_step}")
@@ -109,6 +119,8 @@ class BiddingAnalysisGraph:
         if current_step == "error":
             return "error"
         elif current_step == "scoring_analyzed":
+            # 更新进度到其他信息提取
+            self._update_progress("other_info_extractor")
             return "continue"
         else:
             logger.warning(f"未知的评分分析状态: {current_step}")
@@ -120,6 +132,8 @@ class BiddingAnalysisGraph:
         if current_step == "error":
             return "error"
         elif current_step == "other_info_extracted":
+            # 更新进度到结果格式化
+            self._update_progress("output_formatter")
             return "continue"
         else:
             logger.warning(f"未知的其他信息提取状态: {current_step}")
@@ -153,19 +167,23 @@ class BiddingAnalysisGraph:
         
         return error_handler_node
     
-    def run(self, document_path: str) -> Dict[str, Any]:
+    def run(self, document_path: str, progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
         """
         运行分析流程
-        
+
         Args:
             document_path: 文档路径
-            
+            progress_callback: 进度回调函数
+
         Returns:
             Dict[str, Any]: 分析结果
         """
         try:
             logger.info(f"开始分析文档: {document_path}")
-            
+
+            # 设置进度回调
+            self.progress_callback = progress_callback
+
             # 初始化状态
             from src.models.data_models import BiddingAnalysisResult
             import os
@@ -180,10 +198,18 @@ class BiddingAnalysisGraph:
                 error_messages=[],
                 retry_count=0
             )
-            
+
+            # 调用进度回调 - 开始文档处理
+            if self.progress_callback:
+                self.progress_callback("document_processor")
+
             # 运行图
             final_state = self.graph.invoke(initial_state.model_dump())
-            
+
+            # 如果分析成功完成，调用最终进度更新
+            if final_state.get('current_step') == 'completed' and self.progress_callback:
+                self.progress_callback("completed")
+
             logger.info(f"分析完成，最终状态: {final_state.get('current_step', 'unknown')}")
             return final_state
             

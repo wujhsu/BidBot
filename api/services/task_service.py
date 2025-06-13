@@ -112,7 +112,7 @@ class TaskService:
         
         try:
             # 更新任务状态为处理中
-            self._update_task_status(task_id, TaskStatus.PROCESSING, "document_processor")
+            self._update_task_status(task_id, TaskStatus.PROCESSING, "start")
             
             # 在线程池中运行分析
             loop = asyncio.get_event_loop()
@@ -157,9 +157,9 @@ class TaskService:
             def progress_callback(step: str):
                 self._update_task_status(task_id, TaskStatus.PROCESSING, step)
             
-            # 运行分析
-            result = self.analysis_graph.run(pdf_path)
-            
+            # 运行分析，传递进度回调
+            result = self.analysis_graph.run(pdf_path, progress_callback)
+
             return result
             
         except Exception as e:
@@ -169,7 +169,7 @@ class TaskService:
     def _update_task_status(self, task_id: str, status: TaskStatus, current_step: str) -> None:
         """
         更新任务状态
-        
+
         Args:
             task_id: 任务ID
             status: 任务状态
@@ -178,12 +178,17 @@ class TaskService:
         task_info = self.tasks.get(task_id)
         if not task_info:
             return
-        
+
+        # 检查状态是否真的发生了变化
+        old_step = task_info.get("progress", {}).current_step if task_info.get("progress") else None
+        if old_step == current_step:
+            return  # 状态没有变化，不需要更新
+
         step_info = self.step_mapping.get(current_step, {
-            "progress": 0, 
+            "progress": 0,
             "description": current_step
         })
-        
+
         task_info["status"] = status
         task_info["progress"] = AnalysisProgress(
             current_step=current_step,
@@ -191,6 +196,9 @@ class TaskService:
             step_description=step_info["description"]
         )
         task_info["updated_at"] = datetime.now()
+
+        # 只在状态真正改变时记录日志
+        logger.info(f"任务 {task_id} 进度更新: {current_step} ({step_info['progress']}%)")
     
     def _update_task_result(self, task_id: str, status: TaskStatus, result: Dict[str, Any]) -> None:
         """

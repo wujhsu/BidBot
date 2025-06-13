@@ -89,7 +89,8 @@ async def get_analysis_status(task_id: str) -> AnalysisStatusResponse:
         HTTPException: 任务不存在
     """
     try:
-        logger.debug(f"查询分析任务状态: {task_id}")
+        # 降低日志级别，避免频繁轮询产生过多日志
+    # logger.debug(f"查询分析任务状态: {task_id}")
         
         # 获取任务状态
         task_status = task_service.get_task_status(task_id)

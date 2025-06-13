@@ -16,8 +16,12 @@ sys.path.insert(0, str(project_root))
 def main():
     """启动API服务"""
     try:
+        # 设置统一日志格式
+        from config.logging_config import setup_logging, get_uvicorn_log_config
+        setup_logging("INFO")
+
         logger.info("正在启动智能投标助手 API 服务...")
-        
+
         # 检查环境
         try:
             from config.settings import settings
@@ -25,7 +29,7 @@ def main():
         except Exception as e:
             logger.error(f"配置加载失败: {e}")
             return
-        
+
         # 创建必要的目录
         os.makedirs("./uploads", exist_ok=True)
         os.makedirs("./temp", exist_ok=True)
@@ -38,7 +42,8 @@ def main():
             port=8000,
             reload=True,
             log_level="info",
-            access_log=True
+            access_log=True,
+            log_config=get_uvicorn_log_config()  # 使用我们的日志配置
         )
         
     except KeyboardInterrupt:

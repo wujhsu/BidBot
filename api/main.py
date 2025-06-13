@@ -219,12 +219,17 @@ async def periodic_cleanup():
 
 if __name__ == "__main__":
     import uvicorn
-    
+    from config.logging_config import setup_logging, get_uvicorn_log_config
+
+    # 设置统一日志格式
+    setup_logging("INFO")
+
     # 开发模式运行
     uvicorn.run(
         "api.main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level="info"
+        log_level="info",
+        log_config=get_uvicorn_log_config()
     )
