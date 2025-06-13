@@ -30,5 +30,10 @@ Thumbs.db
 test_documents/
 mytest/
 
+# 上传文件目录
+uploads/
+
+# 临时目录
+temp/
 
 graph.png

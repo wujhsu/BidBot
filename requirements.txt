@@ -51,6 +51,12 @@ tqdm==4.67.1
 requests==2.32.3
 httpx==0.28.1
 
+# ===== Web 框架 Web Framework =====
+# FastAPI 和相关依赖
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+
 # ===== 异步支持 Async Support =====
 anyio==4.9.0
 aiofiles==24.1.0
