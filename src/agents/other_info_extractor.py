@@ -1,6 +1,6 @@
 """
-其他重要信息提取节点
-Other important information extraction node for the Langgraph workflow
+合同信息提取节点
+Contract information extraction node for the Langgraph workflow
 """
 
 from typing import Dict, Any, List, Optional
@@ -13,11 +13,11 @@ from src.utils.improved_retrieval import ImprovedRetriever
 import json
 import re
 
-class OtherInfoExtractor:
-    """其他重要信息提取器"""
-    
+class ContractInfoExtractor:
+    """合同信息提取器"""
+
     def __init__(self):
-        """初始化其他信息提取器"""
+        """初始化合同信息提取器"""
         self.llm = LLMFactory.create_llm()
         self.breach_liability_prompt = self._create_breach_liability_prompt()
         self.contract_prompt = self._create_contract_prompt()
@@ -431,7 +431,7 @@ class OtherInfoExtractor:
 
     def _update_breach_liability(self, state: GraphStateModel, data: dict) -> None:
         """更新违约责任信息"""
-        other_info = state.analysis_result.other_information
+        contract_info = state.analysis_result.contract_information
 
         if 'breach_liability' in data and isinstance(data['breach_liability'], list):
             breach_liability_fields = []
@@ -474,11 +474,11 @@ class OtherInfoExtractor:
                         confidence=item.get('confidence', 0.5)
                     )
                     breach_liability_fields.append(breach_liability_field)
-            other_info.breach_liability = breach_liability_fields
+            contract_info.breach_liability = breach_liability_fields
 
     def _update_contract_info(self, state: GraphStateModel, data: dict) -> None:
         """更新合同信息"""
-        other_info = state.analysis_result.other_information
+        contract_info = state.analysis_result.contract_information
 
         # 更新合同条款
         if 'contract_terms' in data and isinstance(data['contract_terms'], list):
@@ -514,7 +514,7 @@ class OtherInfoExtractor:
                         ),
                         confidence=item.get('confidence', 0.5)
                     ))
-            other_info.contract_terms = contract_terms
+            contract_info.contract_terms = contract_terms
 
         # 更新其他单项信息
         single_fields = [
@@ -546,7 +546,7 @@ class OtherInfoExtractor:
                     logger.warning(f"无法为字段 {field_name} 提取页码信息，来源文本: {source_text[:50]}...")
                     page_number = -1  # 设置默认页码为-1
 
-                setattr(other_info, field_name, ExtractedField(
+                setattr(contract_info, field_name, ExtractedField(
                     value=field_data.get('value'),
                     source=DocumentSource(
                         source_text=source_text,
@@ -557,7 +557,7 @@ class OtherInfoExtractor:
     
     def _update_risk_warnings(self, state: GraphStateModel, risk_warnings: List[dict]) -> None:
         """更新风险警告"""
-        other_info = state.analysis_result.other_information
+        contract_info = state.analysis_result.contract_information
 
         risk_fields = []
         for item in risk_warnings:
@@ -594,23 +594,23 @@ class OtherInfoExtractor:
                 )
                 risk_fields.append(risk_field)
 
-        other_info.risk_warnings = risk_fields
+        contract_info.risk_warnings = risk_fields
 
-def create_other_info_extractor_node():
-    """创建其他信息提取节点函数"""
-    extractor = OtherInfoExtractor()
+def create_contract_info_extractor_node():
+    """创建合同信息提取节点函数"""
+    extractor = ContractInfoExtractor()
     
-    def other_info_extractor_node(state: Dict[str, Any]) -> Dict[str, Any]:
-        """其他信息提取节点函数"""
+    def contract_info_extractor_node(state: Dict[str, Any]) -> Dict[str, Any]:
+        """合同信息提取节点函数"""
         # 转换为GraphStateModel对象
         graph_state = GraphStateModel(**state)
-        
-        # 执行其他信息提取
+
+        # 执行合同信息提取
         graph_state = extractor.extract_breach_liability(graph_state)
         graph_state = extractor.extract_contract_info(graph_state)
         graph_state = extractor.identify_risks(graph_state)
-        
+
         # 转换回字典格式
         return graph_state.model_dump()
-    
-    return other_info_extractor_node
+
+    return contract_info_extractor_node

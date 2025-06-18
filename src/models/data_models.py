@@ -82,8 +82,8 @@ class ScoringCriteria(BaseModel):
     bonus_points: List[ExtractedField] = Field(default_factory=list, description="加分项明细")
     disqualification_clauses: List[ExtractedField] = Field(default_factory=list, description="否决项条款")
 
-class OtherInformation(BaseModel):
-    """其他重要信息模块"""
+class ContractInformation(BaseModel):
+    """合同信息模块"""
     breach_liability: List[ExtractedField] = Field(default_factory=list, description="违约责任")
     contract_terms: List[ExtractedField] = Field(default_factory=list, description="合同主要条款/特殊约定")
     payment_terms: ExtractedField = Field(default_factory=ExtractedField, description="付款方式与周期")
@@ -99,7 +99,7 @@ class BiddingAnalysisResult(BaseModel):
     analysis_time: datetime = Field(default_factory=datetime.now, description="分析时间")
     basic_information: BasicInformation = Field(default_factory=BasicInformation, description="基础信息")
     scoring_criteria: ScoringCriteria = Field(default_factory=ScoringCriteria, description="评分标准")
-    other_information: OtherInformation = Field(default_factory=OtherInformation, description="其他重要信息")
+    contract_information: ContractInformation = Field(default_factory=ContractInformation, description="合同信息")
     processing_notes: List[str] = Field(default_factory=list, description="处理说明")
 
 class GraphState(TypedDict):

@@ -11,7 +11,7 @@ from src.models.data_models import GraphState, GraphStateModel
 from src.agents.document_processor import create_document_processor_node
 from src.agents.basic_info_extractor import create_basic_info_extractor_node
 from src.agents.scoring_analyzer import create_scoring_analyzer_node
-from src.agents.other_info_extractor import create_other_info_extractor_node
+from src.agents.other_info_extractor import create_contract_info_extractor_node
 from src.agents.output_formatter import create_output_formatter_node
 
 class BiddingAnalysisGraph:
@@ -32,7 +32,7 @@ class BiddingAnalysisGraph:
         workflow.add_node("document_processor", create_document_processor_node())
         workflow.add_node("basic_info_extractor", create_basic_info_extractor_node())
         workflow.add_node("scoring_analyzer", create_scoring_analyzer_node())
-        workflow.add_node("other_info_extractor", create_other_info_extractor_node())
+        workflow.add_node("contract_info_extractor", create_contract_info_extractor_node())
         workflow.add_node("output_formatter", create_output_formatter_node())
         workflow.add_node("error_handler", self._create_error_handler_node())
         
@@ -62,14 +62,14 @@ class BiddingAnalysisGraph:
             "scoring_analyzer",
             self._route_after_scoring,
             {
-                "continue": "other_info_extractor",
+                "continue": "contract_info_extractor",
                 "error": "error_handler"
             }
         )
-        
+
         workflow.add_conditional_edges(
-            "other_info_extractor",
-            self._route_after_other_info,
+            "contract_info_extractor",
+            self._route_after_contract_info,
             {
                 "continue": "output_formatter",
                 "error": "error_handler"
@@ -126,8 +126,8 @@ class BiddingAnalysisGraph:
             logger.warning(f"未知的评分分析状态: {current_step}")
             return "continue"
     
-    def _route_after_other_info(self, state: Dict[str, Any]) -> Literal["continue", "error"]:
-        """其他信息提取后的路由决策"""
+    def _route_after_contract_info(self, state: Dict[str, Any]) -> Literal["continue", "error"]:
+        """合同信息提取后的路由决策"""
         current_step = state.get("current_step", "")
         if current_step == "error":
             return "error"
