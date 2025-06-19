@@ -352,19 +352,58 @@ class ContractInfoExtractor:
         return state
     
     def _parse_llm_response(self, response: str) -> dict:
-        """解析LLM响应"""
+        """解析LLM响应，增强容错性"""
         try:
             # 尝试提取JSON部分
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 json_str = json_match.group()
-                return json.loads(json_str)
+
+                # 尝试直接解析
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"直接JSON解析失败: {e}")
+
+                    # 尝试清理和修复JSON
+                    cleaned_json = self._clean_json_string(json_str)
+                    if cleaned_json:
+                        try:
+                            result = json.loads(cleaned_json)
+                            logger.info("JSON清理后解析成功")
+                            return result
+                        except json.JSONDecodeError as e2:
+                            logger.error(f"清理后JSON解析仍然失败: {e2}")
+                            # 记录调试信息
+                            logger.debug(f"原始响应长度: {len(response)}")
+                            logger.debug(f"JSON字符串长度: {len(json_str)}")
+
+                    return {}
             else:
                 logger.warning("未找到有效的JSON响应")
+                logger.debug(f"响应内容前500字符: {response[:500]}")
                 return {}
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON解析失败: {e}")
+        except Exception as e:
+            logger.error(f"解析LLM响应时发生未预期错误: {e}")
             return {}
+
+    def _clean_json_string(self, json_str: str) -> str:
+        """清理JSON字符串，修复常见格式错误"""
+        try:
+            # 移除可能的BOM和其他不可见字符
+            json_str = json_str.strip().strip('\ufeff')
+
+            # 修复常见的JSON格式问题
+            # 1. 移除对象或数组末尾的多余逗号
+            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+
+            # 2. 修复数字后面意外的字符
+            json_str = re.sub(r'(\d+)([a-zA-Z])', r'"\1\2"', json_str)
+
+            return json_str
+        except Exception as e:
+            logger.error(f"JSON清理过程中出错: {e}")
+            return ""
 
     def _extract_page_number(self, source_text: str) -> Optional[int]:
         """从来源文本中提取页码信息"""

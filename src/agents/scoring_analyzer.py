@@ -268,18 +268,183 @@ class ScoringAnalyzer:
         return state
     
     def _parse_llm_response(self, response: str) -> dict:
-        """解析LLM响应"""
+        """解析LLM响应，增强容错性"""
         try:
             # 尝试提取JSON部分
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 json_str = json_match.group()
-                return json.loads(json_str)
+
+                # 尝试直接解析
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"直接JSON解析失败: {e}")
+                    logger.debug(f"原始JSON字符串长度: {len(json_str)}")
+
+                    # 尝试清理和修复JSON
+                    cleaned_json = self._clean_json_string(json_str)
+                    if cleaned_json:
+                        try:
+                            result = json.loads(cleaned_json)
+                            logger.info("JSON清理后解析成功")
+                            return result
+                        except json.JSONDecodeError as e2:
+                            logger.error(f"清理后JSON解析仍然失败: {e2}")
+                            # 记录更多调试信息
+                            self._log_json_debug_info(json_str, e2)
+
+                    # 尝试备用解析策略
+                    backup_result = self._backup_parse_strategy(response)
+                    if backup_result:
+                        logger.info("备用解析策略成功")
+                        return backup_result
+
+                    return {}
             else:
                 logger.warning("未找到有效的JSON响应")
+                logger.debug(f"响应内容前500字符: {response[:500]}")
                 return {}
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON解析失败: {e}")
+        except Exception as e:
+            logger.error(f"解析LLM响应时发生未预期错误: {e}")
+            return {}
+
+    def _clean_json_string(self, json_str: str) -> str:
+        """清理JSON字符串，修复常见格式错误"""
+        try:
+            # 移除可能的BOM和其他不可见字符
+            json_str = json_str.strip().strip('\ufeff')
+
+            # 修复常见的JSON格式问题
+            # 1. 移除对象或数组末尾的多余逗号
+            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+
+            # 2. 修复未转义的引号（简单情况）
+            # 这个比较复杂，先跳过，因为可能误修复
+
+            # 3. 确保字符串值被正确引用
+            # 修复数字后面意外的字符
+            json_str = re.sub(r'(\d+)([a-zA-Z])', r'"\1\2"', json_str)
+
+            return json_str
+        except Exception as e:
+            logger.error(f"JSON清理过程中出错: {e}")
+            return ""
+
+    def _log_json_debug_info(self, json_str: str, error: json.JSONDecodeError):
+        """记录JSON调试信息"""
+        try:
+            # 记录错误位置附近的内容
+            error_pos = getattr(error, 'pos', 0)
+            start_pos = max(0, error_pos - 100)
+            end_pos = min(len(json_str), error_pos + 100)
+            context = json_str[start_pos:end_pos]
+
+            logger.error(f"JSON解析错误详情:")
+            logger.error(f"  错误位置: {error_pos}")
+            logger.error(f"  错误消息: {error.msg}")
+            logger.error(f"  错误上下文: {repr(context)}")
+
+            # 记录JSON的行数和大致结构
+            lines = json_str.split('\n')
+            logger.error(f"  JSON总行数: {len(lines)}")
+            if len(lines) > 10:
+                logger.error(f"  前10行: {lines[:10]}")
+                logger.error(f"  后10行: {lines[-10:]}")
+        except Exception as e:
+            logger.error(f"记录调试信息时出错: {e}")
+
+    def _backup_parse_strategy(self, response: str) -> dict:
+        """备用解析策略，当JSON解析失败时使用"""
+        try:
+            # 尝试从响应中提取关键信息，即使JSON格式不完整
+            result = {"scoring_items": []}
+
+            # 策略1: 查找评分项的模式
+            # 寻找类似 "item_name": "xxx", "max_score": xxx 的模式
+            item_pattern = r'"item_name"\s*:\s*"([^"]+)".*?"max_score"\s*:\s*([^,}\]]+)'
+            matches = re.findall(item_pattern, response, re.DOTALL | re.IGNORECASE)
+
+            for item_name, max_score in matches:
+                # 尝试提取更多信息
+                item_context_start = response.find(f'"item_name": "{item_name}"')
+                if item_context_start != -1:
+                    # 提取这个项目的完整上下文
+                    item_context_end = response.find('}, {', item_context_start)
+                    if item_context_end == -1:
+                        item_context_end = response.find('}]', item_context_start)
+
+                    if item_context_end != -1:
+                        item_context = response[item_context_start:item_context_end + 1]
+
+                        # 提取其他字段
+                        category_match = re.search(r'"category"\s*:\s*"([^"]*)"', item_context)
+                        criteria_match = re.search(r'"criteria"\s*:\s*"([^"]*)"', item_context)
+                        source_match = re.search(r'"source_text"\s*:\s*"([^"]*)"', item_context)
+
+                        # 处理max_score
+                        try:
+                            max_score_val = float(max_score.strip().strip('"'))
+                        except:
+                            max_score_val = max_score.strip().strip('"')
+
+                        scoring_item = {
+                            "category": category_match.group(1) if category_match else "",
+                            "item_name": item_name,
+                            "max_score": max_score_val,
+                            "criteria": criteria_match.group(1) if criteria_match else "",
+                            "source_text": source_match.group(1) if source_match else ""
+                        }
+                        result["scoring_items"].append(scoring_item)
+
+            # 策略2: 如果策略1没有找到结果，尝试更宽松的模式匹配
+            if not result["scoring_items"]:
+                # 查找分散的评分信息
+                loose_patterns = [
+                    r'技术.*?(\d+).*?分',
+                    r'商务.*?(\d+).*?分',
+                    r'价格.*?(\d+).*?分',
+                    r'(\d+).*?分.*?技术',
+                    r'(\d+).*?分.*?商务',
+                    r'(\d+).*?分.*?价格'
+                ]
+
+                for pattern in loose_patterns:
+                    matches = re.findall(pattern, response, re.IGNORECASE)
+                    for match in matches:
+                        try:
+                            score = float(match)
+                            if 'tech' in pattern.lower() or '技术' in pattern:
+                                category = "技术分"
+                                item_name = "技术评分"
+                            elif 'business' in pattern.lower() or '商务' in pattern:
+                                category = "商务分"
+                                item_name = "商务评分"
+                            elif 'price' in pattern.lower() or '价格' in pattern:
+                                category = "价格分"
+                                item_name = "价格评分"
+                            else:
+                                category = "其他"
+                                item_name = "评分项"
+
+                            scoring_item = {
+                                "category": category,
+                                "item_name": item_name,
+                                "max_score": score,
+                                "criteria": "从文档中提取的评分信息",
+                                "source_text": f"匹配模式: {pattern}"
+                            }
+                            result["scoring_items"].append(scoring_item)
+                        except ValueError:
+                            continue
+
+            if result["scoring_items"]:
+                logger.info(f"备用解析策略提取到 {len(result['scoring_items'])} 个评分项")
+                return result
+
+            return {}
+        except Exception as e:
+            logger.error(f"备用解析策略失败: {e}")
             return {}
 
     def _extract_page_number(self, source_text: str) -> Optional[int]:
