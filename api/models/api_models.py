@@ -52,6 +52,7 @@ class AnalysisProgress(BaseModel):
     progress_percentage: int = Field(description="进度百分比 (0-100)")
     step_description: str = Field(description="步骤描述")
     estimated_remaining_time: Optional[int] = Field(None, description="预估剩余时间（秒）")
+    agent_progress: Optional[Dict[str, int]] = Field(None, description="并行智能体进度 (智能体名称: 进度百分比)")
 
 
 class AnalysisStatusResponse(BaseModel):

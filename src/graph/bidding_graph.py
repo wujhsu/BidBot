@@ -13,6 +13,7 @@ from src.agents.basic_info_extractor import create_basic_info_extractor_node
 from src.agents.scoring_analyzer import create_scoring_analyzer_node
 from src.agents.other_info_extractor import create_contract_info_extractor_node
 from src.agents.output_formatter import create_output_formatter_node
+from src.agents.parallel_aggregator import create_parallel_aggregator_node, parallel_progress_manager
 
 class BiddingAnalysisGraph:
     """智能投标助手分析图"""
@@ -24,52 +25,36 @@ class BiddingAnalysisGraph:
     
     def _create_graph(self) -> StateGraph:
         """创建Langgraph工作流图"""
-        
+
         # 创建状态图
         workflow = StateGraph(GraphState)
-        
+
         # 添加节点
         workflow.add_node("document_processor", create_document_processor_node())
         workflow.add_node("basic_info_extractor", create_basic_info_extractor_node())
         workflow.add_node("scoring_analyzer", create_scoring_analyzer_node())
         workflow.add_node("contract_info_extractor", create_contract_info_extractor_node())
+        workflow.add_node("parallel_aggregator", create_parallel_aggregator_node())
         workflow.add_node("output_formatter", create_output_formatter_node())
         workflow.add_node("error_handler", self._create_error_handler_node())
         
         # 设置入口点
         workflow.set_entry_point("document_processor")
-        
-        # 添加条件边
-        workflow.add_conditional_edges(
-            "document_processor",
-            self._route_after_document_processing,
-            {
-                "continue": "basic_info_extractor",
-                "error": "error_handler"
-            }
-        )
-        
-        workflow.add_conditional_edges(
-            "basic_info_extractor",
-            self._route_after_basic_info,
-            {
-                "continue": "scoring_analyzer",
-                "error": "error_handler"
-            }
-        )
-        
-        workflow.add_conditional_edges(
-            "scoring_analyzer",
-            self._route_after_scoring,
-            {
-                "continue": "contract_info_extractor",
-                "error": "error_handler"
-            }
-        )
 
+        # 并行执行模式
+        workflow.add_edge("document_processor", "basic_info_extractor")
+        workflow.add_edge("document_processor", "scoring_analyzer")
+        workflow.add_edge("document_processor", "contract_info_extractor")
+
+        # 所有并行节点完成后，进入聚合节点
+        workflow.add_edge("basic_info_extractor", "parallel_aggregator")
+        workflow.add_edge("scoring_analyzer", "parallel_aggregator")
+        workflow.add_edge("contract_info_extractor", "parallel_aggregator")
+
+        # 聚合完成后进入输出格式化
         workflow.add_conditional_edges(
-            "contract_info_extractor",
-            self._route_after_contract_info,
+            "parallel_aggregator",
+            self._route_after_parallel_aggregation,
             {
                 "continue": "output_formatter",
                 "error": "error_handler"
@@ -87,56 +72,22 @@ class BiddingAnalysisGraph:
         if self.progress_callback:
             self.progress_callback(step)
 
-    def _route_after_document_processing(self, state: Dict[str, Any]) -> Literal["continue", "error"]:
-        """文档处理后的路由决策"""
-        current_step = state.get("current_step", "")
-        if current_step == "error":
-            return "error"
-        elif current_step in ["document_processed", "document_validated", "structure_extracted"]:
-            # 更新进度到基础信息提取
-            self._update_progress("basic_info_extractor")
-            return "continue"
-        else:
-            logger.warning(f"未知的文档处理状态: {current_step}")
-            return "continue"
+
     
-    def _route_after_basic_info(self, state: Dict[str, Any]) -> Literal["continue", "error"]:
-        """基础信息提取后的路由决策"""
+    def _route_after_parallel_aggregation(self, state: Dict[str, Any]) -> Literal["continue", "error"]:
+        """并行聚合后的路由决策"""
         current_step = state.get("current_step", "")
-        if current_step == "error":
+        if current_step == "error" or current_step == "aggregation_failed":
             return "error"
-        elif current_step == "basic_info_extracted":
-            # 更新进度到评分分析
-            self._update_progress("scoring_analyzer")
-            return "continue"
-        else:
-            logger.warning(f"未知的基础信息提取状态: {current_step}")
-            return "continue"
-    
-    def _route_after_scoring(self, state: Dict[str, Any]) -> Literal["continue", "error"]:
-        """评分分析后的路由决策"""
-        current_step = state.get("current_step", "")
-        if current_step == "error":
-            return "error"
-        elif current_step == "scoring_analyzed":
-            # 更新进度到其他信息提取
-            self._update_progress("other_info_extractor")
-            return "continue"
-        else:
-            logger.warning(f"未知的评分分析状态: {current_step}")
-            return "continue"
-    
-    def _route_after_contract_info(self, state: Dict[str, Any]) -> Literal["continue", "error"]:
-        """合同信息提取后的路由决策"""
-        current_step = state.get("current_step", "")
-        if current_step == "error":
-            return "error"
-        elif current_step == "other_info_extracted":
+        elif current_step in ["parallel_extraction_completed", "partial_extraction_completed"]:
             # 更新进度到结果格式化
             self._update_progress("output_formatter")
             return "continue"
+        elif current_step == "extraction_failed":
+            logger.warning("所有并行提取都失败，进入错误处理")
+            return "error"
         else:
-            logger.warning(f"未知的其他信息提取状态: {current_step}")
+            logger.warning(f"未知的并行聚合状态: {current_step}")
             return "continue"
     
     def _create_error_handler_node(self):
@@ -167,13 +118,14 @@ class BiddingAnalysisGraph:
         
         return error_handler_node
     
-    def run(self, document_path: str, progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+    def run(self, document_path: str, progress_callback: Optional[Callable[[str], None]] = None, original_filename: Optional[str] = None) -> Dict[str, Any]:
         """
         运行分析流程
 
         Args:
             document_path: 文档路径
             progress_callback: 进度回调函数
+            original_filename: 原始文件名（用于显示）
 
         Returns:
             Dict[str, Any]: 分析结果
@@ -187,13 +139,25 @@ class BiddingAnalysisGraph:
             # 初始化状态
             from src.models.data_models import BiddingAnalysisResult
             import os
+            from pathlib import Path
+
+            # 确定显示的文档名称
+            logger.info(f"分析图接收到的原始文件名: {original_filename}")
+            if original_filename:
+                # 使用原始文件名，去掉扩展名
+                display_name = Path(original_filename).stem
+                logger.info(f"使用原始文件名，显示名称: {display_name}")
+            else:
+                # 回退到使用文件路径的basename
+                display_name = os.path.basename(document_path)
+                logger.info(f"使用文件路径basename，显示名称: {display_name}")
 
             initial_state = GraphStateModel(
                 document_path=document_path,
                 document_content=None,
                 chunks=[],
                 vector_store=None,
-                analysis_result=BiddingAnalysisResult(document_name=os.path.basename(document_path)),
+                analysis_result=BiddingAnalysisResult(document_name=display_name),
                 current_step="start",
                 error_messages=[],
                 retry_count=0
@@ -233,28 +197,30 @@ graph TD
     A[开始] --> B[文档预处理]
     B --> C{处理成功?}
     C -->|是| D[基础信息提取]
+    C -->|是| E[评分标准分析]
+    C -->|是| F[合同信息提取]
     C -->|否| H[错误处理]
-    D --> E{提取成功?}
-    E -->|是| F[评分标准分析]
-    E -->|否| H
-    F --> G{分析成功?}
-    G -->|是| I[其他信息提取]
-    G -->|否| H
-    I --> J{提取成功?}
-    J -->|是| K[结果格式化输出]
-    J -->|否| H
-    K --> L[结束]
-    H --> M[尝试输出部分结果]
-    M --> L
-    
+
+    D --> G[并行结果聚合]
+    E --> G
+    F --> G
+
+    G --> I{聚合成功?}
+    I -->|是| J[结果格式化输出]
+    I -->|否| H
+    J --> K[结束]
+    H --> L[尝试输出部分结果]
+    L --> K
+
     style A fill:#e1f5fe
-    style L fill:#e8f5e8
+    style K fill:#e8f5e8
     style H fill:#ffebee
     style B fill:#f3e5f5
-    style D fill:#f3e5f5
-    style F fill:#f3e5f5
-    style I fill:#f3e5f5
-    style K fill:#fff3e0
+    style D fill:#e3f2fd
+    style E fill:#e3f2fd
+    style F fill:#e3f2fd
+    style G fill:#fff3e0
+    style J fill:#fff3e0
 """
         return mermaid_graph
 

@@ -70,9 +70,14 @@ class DocumentProcessor:
                 logger.warning("使用传统模式创建向量存储，可能存在历史数据交叉污染风险")
             state.vector_store = vector_store
             
-            # 初始化分析结果
-            file_name = os.path.basename(state.document_path)
-            state.analysis_result = BiddingAnalysisResult(document_name=file_name)
+            # 保持现有的分析结果，不要重新创建（避免覆盖已设置的document_name）
+            # 如果分析结果不存在，才创建新的
+            if not hasattr(state, 'analysis_result') or state.analysis_result is None:
+                file_name = os.path.basename(state.document_path)
+                state.analysis_result = BiddingAnalysisResult(document_name=file_name)
+                logger.info(f"创建新的分析结果，文档名称: {file_name}")
+            else:
+                logger.info(f"保持现有分析结果，文档名称: {state.analysis_result.document_name}")
             
             # 更新处理步骤
             state.current_step = "document_processed"

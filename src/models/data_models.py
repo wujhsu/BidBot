@@ -3,9 +3,274 @@
 Data models for the Intelligent Bidding Assistant
 """
 
-from typing import List, Optional, Dict, Any, TypedDict, Union
+from typing import List, Optional, Dict, Any, TypedDict, Union, Annotated
 from pydantic import BaseModel, Field
 from datetime import datetime
+from langgraph.graph import add_messages
+import operator
+
+
+def merge_analysis_results(existing, new):
+    """
+    智能合并分析结果，保留所有智能体的提取结果
+
+    Args:
+        existing: 现有的分析结果（可能是dict或BiddingAnalysisResult）
+        new: 新的分析结果（可能是dict或BiddingAnalysisResult）
+
+    Returns:
+        BiddingAnalysisResult: 合并后的结果
+    """
+    # 处理None情况
+    if existing is None:
+        return new
+    if new is None:
+        return existing
+
+    # 转换为BiddingAnalysisResult对象
+    if isinstance(existing, dict):
+        existing = BiddingAnalysisResult(**existing)
+    if isinstance(new, dict):
+        new = BiddingAnalysisResult(**new)
+
+    # 创建合并后的结果
+    merged = BiddingAnalysisResult(
+        document_name=new.document_name or existing.document_name,
+        analysis_time=new.analysis_time or existing.analysis_time
+    )
+
+    # 合并基础信息 - 保留有值的字段
+    merged.basic_information = merge_basic_information(
+        existing.basic_information,
+        new.basic_information
+    )
+
+    # 合并评分标准 - 保留有值的字段
+    merged.scoring_criteria = merge_scoring_criteria(
+        existing.scoring_criteria,
+        new.scoring_criteria
+    )
+
+    # 合并合同信息 - 保留有值的字段
+    merged.contract_information = merge_contract_information(
+        existing.contract_information,
+        new.contract_information
+    )
+
+    # 合并处理说明
+    merged.processing_notes = list(set(existing.processing_notes + new.processing_notes))
+
+    return merged
+
+
+def merge_basic_information(existing, new):
+    """合并基础信息，保留有值的字段"""
+    # 如果new的字段有值，使用new的；否则保留existing的
+    merged = BasicInformation()
+
+    # 合并简单字段
+    for field_name in ['project_name', 'tender_number', 'budget_amount', 'bid_deadline',
+                       'bid_opening_time', 'bid_bond_amount', 'bid_bond_account',
+                       'purchaser_name', 'purchaser_contact', 'agent_name', 'agent_contact']:
+        existing_field = getattr(existing, field_name, ExtractedField())
+        new_field = getattr(new, field_name, ExtractedField())
+
+        # 如果new字段有值，使用new的；否则使用existing的
+        if new_field.value and new_field.value.strip():
+            setattr(merged, field_name, new_field)
+        else:
+            setattr(merged, field_name, existing_field)
+
+    # 合并复杂字段
+    merged.qualification_criteria = merge_qualification_criteria(
+        existing.qualification_criteria, new.qualification_criteria
+    )
+    merged.bid_document_requirements = merge_bid_document_requirements(
+        existing.bid_document_requirements, new.bid_document_requirements
+    )
+    merged.bid_evaluation_process = merge_bid_evaluation_process(
+        existing.bid_evaluation_process, new.bid_evaluation_process
+    )
+
+    return merged
+
+
+def merge_scoring_criteria(existing, new):
+    """合并评分标准"""
+    merged = ScoringCriteria()
+
+    # 合并列表字段 - 去重合并
+    merged.preliminary_review = merge_extracted_field_list(
+        existing.preliminary_review, new.preliminary_review
+    )
+    merged.detailed_scoring = merge_scoring_item_list(
+        existing.detailed_scoring, new.detailed_scoring
+    )
+    merged.bonus_points = merge_extracted_field_list(
+        existing.bonus_points, new.bonus_points
+    )
+    merged.disqualification_clauses = merge_extracted_field_list(
+        existing.disqualification_clauses, new.disqualification_clauses
+    )
+
+    # 合并单个字段
+    merged.evaluation_method = (new.evaluation_method
+                               if new.evaluation_method.value and new.evaluation_method.value.strip()
+                               else existing.evaluation_method)
+
+    # 合并分值构成
+    merged.score_composition = merge_score_composition(
+        existing.score_composition, new.score_composition
+    )
+
+    return merged
+
+
+def merge_contract_information(existing, new):
+    """合并合同信息"""
+    merged = ContractInformation()
+
+    # 合并列表字段
+    merged.breach_liability = merge_extracted_field_list(
+        existing.breach_liability, new.breach_liability
+    )
+    merged.contract_terms = merge_extracted_field_list(
+        existing.contract_terms, new.contract_terms
+    )
+    merged.risk_warnings = merge_extracted_field_list(
+        existing.risk_warnings, new.risk_warnings
+    )
+
+    # 合并单个字段
+    for field_name in ['payment_terms', 'delivery_requirements', 'bid_validity',
+                       'intellectual_property', 'confidentiality']:
+        existing_field = getattr(existing, field_name, ExtractedField())
+        new_field = getattr(new, field_name, ExtractedField())
+
+        if new_field.value and new_field.value.strip():
+            setattr(merged, field_name, new_field)
+        else:
+            setattr(merged, field_name, existing_field)
+
+    return merged
+
+
+def merge_extracted_field_list(existing_list, new_list):
+    """合并ExtractedField列表，去重"""
+    merged = list(existing_list)
+
+    for new_item in new_list:
+        # 检查是否已存在相同内容
+        exists = False
+        for existing_item in merged:
+            if (existing_item.value == new_item.value and
+                existing_item.source and new_item.source and
+                existing_item.source.source_text == new_item.source.source_text):
+                exists = True
+                break
+
+        if not exists:
+            merged.append(new_item)
+
+    return merged
+
+
+def merge_scoring_item_list(existing_list, new_list):
+    """合并ScoringItem列表，去重"""
+    merged = list(existing_list)
+
+    for new_item in new_list:
+        # 检查是否已存在相同内容
+        exists = False
+        for existing_item in merged:
+            if (existing_item.category == new_item.category and
+                existing_item.item_name == new_item.item_name):
+                exists = True
+                break
+
+        if not exists:
+            merged.append(new_item)
+
+    return merged
+
+
+def merge_qualification_criteria(existing, new):
+    """合并资格审查条件"""
+    merged = QualificationCriteria()
+
+    merged.company_certifications = merge_extracted_field_list(
+        existing.company_certifications, new.company_certifications
+    )
+    merged.project_experience = merge_extracted_field_list(
+        existing.project_experience, new.project_experience
+    )
+    merged.team_requirements = merge_extracted_field_list(
+        existing.team_requirements, new.team_requirements
+    )
+    merged.other_requirements = merge_extracted_field_list(
+        existing.other_requirements, new.other_requirements
+    )
+
+    return merged
+
+
+def merge_bid_document_requirements(existing, new):
+    """合并投标文件要求"""
+    merged = BidDocumentRequirements()
+
+    merged.composition_and_format = merge_extracted_field_list(
+        existing.composition_and_format, new.composition_and_format
+    )
+    merged.binding_and_sealing = merge_extracted_field_list(
+        existing.binding_and_sealing, new.binding_and_sealing
+    )
+    merged.signature_and_seal = merge_extracted_field_list(
+        existing.signature_and_seal, new.signature_and_seal
+    )
+    merged.document_structure = merge_extracted_field_list(
+        existing.document_structure, new.document_structure
+    )
+
+    return merged
+
+
+def merge_bid_evaluation_process(existing, new):
+    """合并开评定标流程"""
+    merged = BidEvaluationProcess()
+
+    merged.bid_opening = merge_extracted_field_list(
+        existing.bid_opening, new.bid_opening
+    )
+    merged.evaluation = merge_extracted_field_list(
+        existing.evaluation, new.evaluation
+    )
+    merged.award_decision = merge_extracted_field_list(
+        existing.award_decision, new.award_decision
+    )
+
+    return merged
+
+
+def merge_score_composition(existing, new):
+    """合并分值构成"""
+    merged = ScoreComposition()
+
+    # 合并单个字段
+    for field_name in ['technical_score', 'commercial_score', 'price_score']:
+        existing_field = getattr(existing, field_name, ExtractedField())
+        new_field = getattr(new, field_name, ExtractedField())
+
+        if new_field.value and new_field.value.strip():
+            setattr(merged, field_name, new_field)
+        else:
+            setattr(merged, field_name, existing_field)
+
+    # 合并其他分数列表
+    merged.other_scores = merge_extracted_field_list(
+        existing.other_scores, new.other_scores
+    )
+
+    return merged
 
 class DocumentSource(BaseModel):
     """文档来源信息"""
@@ -104,14 +369,14 @@ class BiddingAnalysisResult(BaseModel):
 
 class GraphState(TypedDict):
     """Langgraph状态模型"""
-    document_path: str
-    document_content: Optional[str]
-    chunks: List[str]
-    vector_store: Optional[Any]
-    analysis_result: BiddingAnalysisResult
-    current_step: str
-    error_messages: List[str]
-    retry_count: int
+    document_path: Annotated[str, lambda x, y: y]  # 后写入的值覆盖前面的值
+    document_content: Annotated[Optional[str], lambda x, y: y]  # 后写入的值覆盖前面的值
+    chunks: Annotated[List[str], lambda x, y: y]  # 后写入的值覆盖前面的值
+    vector_store: Annotated[Optional[Any], lambda x, y: y]  # 后写入的值覆盖前面的值
+    analysis_result: Annotated[BiddingAnalysisResult, merge_analysis_results]  # 智能合并分析结果
+    current_step: Annotated[str, lambda x, y: y]  # 后写入的值覆盖前面的值
+    error_messages: Annotated[List[str], operator.add]  # 支持并发追加
+    retry_count: Annotated[int, lambda x, y: y]  # 后写入的值覆盖前面的值
 
 class GraphStateModel(BaseModel):
     """Pydantic版本的GraphState，用于数据验证和转换"""

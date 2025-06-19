@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from loguru import logger
 
 from src.graph.bidding_graph import BiddingAnalysisGraph
+from src.agents.parallel_aggregator import parallel_progress_manager
 from api.models.api_models import TaskStatus, AnalysisProgress, AnalysisStatusResponse
 from api.services.file_service import file_service
 
@@ -41,9 +42,25 @@ class TaskService:
             "basic_info_extractor": {"progress": 40, "description": "提取基础信息中..."},
             "scoring_analyzer": {"progress": 60, "description": "分析评分标准中..."},
             "other_info_extractor": {"progress": 80, "description": "提取其他信息中..."},
+            "contract_info_extractor": {"progress": 80, "description": "提取合同信息中..."},
+            "parallel_aggregator": {"progress": 85, "description": "聚合并行结果中..."},
+            "parallel_extraction_completed": {"progress": 85, "description": "并行提取完成"},
+            "partial_extraction_completed": {"progress": 75, "description": "部分提取完成"},
+            "extraction_failed": {"progress": 0, "description": "提取失败"},
+            "aggregation_failed": {"progress": 0, "description": "聚合失败"},
             "output_formatter": {"progress": 90, "description": "格式化结果中..."},
             "completed": {"progress": 100, "description": "分析完成"},
             "failed": {"progress": 0, "description": "分析失败"}
+        }
+
+        # 并行执行阶段的步骤
+        self.parallel_steps = {
+            "basic_info_extractor",
+            "scoring_analyzer",
+            "contract_info_extractor",
+            "parallel_aggregator",
+            "parallel_extraction_completed",
+            "partial_extraction_completed"
         }
     
     async def create_analysis_task(self, file_id: str, options: Optional[Dict[str, Any]] = None) -> str:
@@ -81,7 +98,8 @@ class TaskService:
             "progress": AnalysisProgress(
                 current_step="start",
                 progress_percentage=0,
-                step_description="等待开始分析"
+                step_description="等待开始分析",
+                agent_progress=None
             ),
             "result": None,
             "error_message": None,
@@ -144,11 +162,11 @@ class TaskService:
     def _run_analysis_sync(self, task_id: str, pdf_path: str) -> Dict[str, Any]:
         """
         同步运行分析（在线程池中执行）
-        
+
         Args:
             task_id: 任务ID
             pdf_path: PDF文件路径
-            
+
         Returns:
             分析结果
         """
@@ -156,12 +174,26 @@ class TaskService:
             # 创建一个自定义的回调来更新进度
             def progress_callback(step: str):
                 self._update_task_status(task_id, TaskStatus.PROCESSING, step)
-            
-            # 运行分析，传递进度回调
-            result = self.analysis_graph.run(pdf_path, progress_callback)
+
+            # 获取原始文件名
+            task_info = self.tasks.get(task_id)
+            original_filename = None
+            if task_info:
+                file_id = task_info.get("file_id")
+                logger.info(f"获取文件ID: {file_id}")
+                if file_id:
+                    file_info = file_service.get_file_info(file_id)
+                    logger.info(f"文件信息: {file_info}")
+                    if file_info and file_info.get("upload_info"):
+                        original_filename = file_info["upload_info"].get("filename")
+                        logger.info(f"获取到原始文件名: {original_filename}")
+
+            # 运行分析，传递进度回调和原始文件名
+            logger.info(f"传递给分析图的原始文件名: {original_filename}")
+            result = self.analysis_graph.run(pdf_path, progress_callback, original_filename)
 
             return result
-            
+
         except Exception as e:
             logger.error(f"同步分析失败: {e}")
             return {"current_step": "failed", "error_messages": [str(e)]}
@@ -189,16 +221,44 @@ class TaskService:
             "description": current_step
         })
 
+        # 获取并行进度数据
+        agent_progress = None
+        progress_percentage = step_info["progress"]
+        step_description = step_info["description"]
+
+        if current_step in self.parallel_steps:
+            try:
+                # 获取并行进度管理器的数据
+                agent_progress = parallel_progress_manager.agent_progress.copy()
+                overall_progress = parallel_progress_manager.get_overall_progress()
+                parallel_description = parallel_progress_manager.get_progress_description()
+
+                # 在并行阶段使用并行进度管理器的数据
+                if current_step in ["basic_info_extractor", "scoring_analyzer", "contract_info_extractor"]:
+                    progress_percentage = max(20, overall_progress)  # 确保不低于文档预处理的20%
+                    step_description = parallel_description
+                elif current_step in ["parallel_extraction_completed", "partial_extraction_completed"]:
+                    step_description = parallel_description
+
+                logger.debug(f"并行进度数据: {agent_progress}, 总体进度: {overall_progress}%")
+            except Exception as e:
+                logger.warning(f"获取并行进度数据失败: {e}")
+                agent_progress = None
+
         task_info["status"] = status
         task_info["progress"] = AnalysisProgress(
             current_step=current_step,
-            progress_percentage=step_info["progress"],
-            step_description=step_info["description"]
+            progress_percentage=progress_percentage,
+            step_description=step_description,
+            agent_progress=agent_progress
         )
         task_info["updated_at"] = datetime.now()
 
         # 只在状态真正改变时记录日志
-        logger.info(f"任务 {task_id} 进度更新: {current_step} ({step_info['progress']}%)")
+        if agent_progress:
+            logger.info(f"任务 {task_id} 进度更新: {current_step} ({progress_percentage}%), 并行进度: {agent_progress}")
+        else:
+            logger.info(f"任务 {task_id} 进度更新: {current_step} ({progress_percentage}%)")
     
     def _update_task_result(self, task_id: str, status: TaskStatus, result: Dict[str, Any]) -> None:
         """
@@ -218,7 +278,8 @@ class TaskService:
         task_info["progress"] = AnalysisProgress(
             current_step="completed",
             progress_percentage=100,
-            step_description="分析完成"
+            step_description="分析完成",
+            agent_progress=None  # 完成时清除并行进度数据
         )
         task_info["updated_at"] = datetime.now()
     
@@ -240,7 +301,8 @@ class TaskService:
         task_info["progress"] = AnalysisProgress(
             current_step="failed",
             progress_percentage=0,
-            step_description="分析失败"
+            step_description="分析失败",
+            agent_progress=None  # 失败时清除并行进度数据
         )
         task_info["updated_at"] = datetime.now()
     
