@@ -9,7 +9,7 @@ from loguru import logger
 
 from api.models.api_models import FileUploadResponse, ErrorResponse
 from api.services.file_service import file_service
-from api.middleware.session import SessionManager
+from api.middleware.session import SessionManager, cleanup_expired_sessions, _cleanup_empty_directories
 
 router = APIRouter(prefix="/api", tags=["文件上传"])
 
@@ -63,6 +63,86 @@ async def upload_file(
         raise HTTPException(
             status_code=500,
             detail=f"文件上传失败: {str(e)}"
+        )
+
+
+@router.post("/cleanup/empty-dirs")
+async def cleanup_empty_directories():
+    """
+    清理空目录
+
+    Returns:
+        dict: 清理结果统计
+    """
+    try:
+        logger.info("手动触发空目录清理...")
+
+        results = {}
+        total_cleaned = 0
+
+        # 要清理的目录列表
+        dirs_to_clean = [
+            ("./uploads", "上传"),
+            ("./vector_store", "向量存储"),
+            ("./temp", "临时文件")
+        ]
+
+        for base_dir, dir_type in dirs_to_clean:
+            cleaned_count = _cleanup_empty_directories(base_dir, dir_type)
+            results[dir_type] = cleaned_count
+            total_cleaned += cleaned_count
+
+        logger.info(f"空目录清理完成，共清理了 {total_cleaned} 个空目录")
+
+        return {
+            "success": True,
+            "message": f"清理完成，共清理了 {total_cleaned} 个空目录",
+            "details": results,
+            "total_cleaned": total_cleaned
+        }
+
+    except Exception as e:
+        logger.error(f"清理空目录失败: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"清理空目录失败: {str(e)}"
+        )
+
+
+@router.post("/cleanup/expired-sessions")
+async def cleanup_expired_sessions_endpoint(max_age_hours: int = 24):
+    """
+    清理过期会话
+
+    Args:
+        max_age_hours: 会话最大保留时间（小时），默认24小时
+
+    Returns:
+        dict: 清理结果
+    """
+    try:
+        logger.info(f"手动触发过期会话清理，保留时间: {max_age_hours}小时...")
+
+        cleaned_count = cleanup_expired_sessions(
+            base_upload_dir="./uploads",
+            base_vector_dir="./vector_store",
+            base_temp_dir="./temp",
+            max_age_hours=max_age_hours,
+            cleanup_empty_dirs=True
+        )
+
+        return {
+            "success": True,
+            "message": f"清理完成，共清理了 {cleaned_count} 个过期会话",
+            "sessions_cleaned": cleaned_count,
+            "max_age_hours": max_age_hours
+        }
+
+    except Exception as e:
+        logger.error(f"清理过期会话失败: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"清理过期会话失败: {str(e)}"
         )
 
 

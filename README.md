@@ -14,6 +14,7 @@
 ## 提取信息模块
 
 ### 1. 基础信息模块
+
 - 项目名称、招标编号、预算金额
 - 投标截止时间、开标时间
 - 投标保证金信息
@@ -21,6 +22,7 @@
 - 资格审查硬性条件
 
 ### 2. 评分标准分析模块
+
 - 初步评审标准
 - 详细评审方法
 - 分值构成（技术分、商务分、价格分）
@@ -28,6 +30,7 @@
 - 加分项和否决项条款
 
 ### 3. 其他重要信息模块
+
 - 合同主要条款
 - 付款方式与周期
 - 交付要求和期限
@@ -37,16 +40,20 @@
 ## 安装和配置
 
 ### 1. 环境要求
+
 - Python 3.8+
 - 支持的操作系统: Windows, macOS, Linux
 
 ### 2. 安装依赖
+
 ```bash
 pip install -r requirements.txt
 ```
 
 ### 3. 配置API密钥
+
 复制环境变量配置文件：
+
 ```bash
 cp .env.example .env
 ```
@@ -54,12 +61,14 @@ cp .env.example .env
 编辑 `.env` 文件，填入你的API密钥：
 
 **使用OpenAI:**
+
 ```env
 LLM_PROVIDER=openai
 OPENAI_API_KEY=your_openai_api_key_here
 ```
 
 **使用阿里云通义千问:**
+
 ```env
 LLM_PROVIDER=dashscope
 DASHSCOPE_API_KEY=your_dashscope_api_key_here
@@ -68,27 +77,32 @@ DASHSCOPE_API_KEY=your_dashscope_api_key_here
 ## 使用方法
 
 ### 基本用法
+
 ```bash
 python main.py path/to/your/bidding_document.pdf
 ```
 
 ### 指定LLM提供商
+
 ```bash
 python main.py document.pdf --provider openai
 python main.py document.pdf --provider dashscope
 ```
 
 ### 测试连接
+
 ```bash
 python main.py document.pdf --test-connection
 ```
 
 ### 显示工作流图
+
 ```bash
 python main.py document.pdf --show-graph
 ```
 
 ### 详细输出模式
+
 ```bash
 python main.py document.pdf --verbose
 ```
@@ -158,18 +172,21 @@ BiddingAssistant2/
 为了确保每次处理新文档时不受历史文档数据的影响，系统提供了向量库隔离功能：
 
 ### 🔒 隔离模式（推荐）
+
 - **默认开启**：`CLEAR_VECTOR_STORE_ON_NEW_DOCUMENT=true`
 - **工作原理**：每次处理新文档时自动清空历史向量数据
 - **优势**：确保信息提取的准确性，避免历史文档的交叉污染
 - **适用场景**：大多数使用场景，特别是需要准确分析单个文档时
 
 ### 📚 累积模式
+
 - **配置方式**：`CLEAR_VECTOR_STORE_ON_NEW_DOCUMENT=false`
 - **工作原理**：保留历史文档的向量数据，可能存在交叉检索
 - **风险**：新文档的信息提取可能受到历史文档内容的影响
 - **适用场景**：需要跨文档检索或对比分析的特殊场景
 
 ### 🧪 测试隔离效果
+
 ```bash
 # 运行隔离效果测试
 python test_vector_isolation.py
@@ -189,6 +206,7 @@ A: 检查API密钥是否正确，网络连接是否正常
 A: 减小chunk_size参数或处理较小的文档
 
 ### 日志查看
+
 日志文件位于 `logs/bidding_assistant.log`，包含详细的运行信息。
 
 ## 开发计划

@@ -163,21 +163,33 @@ class SessionManager:
         return temp_dir
 
 
-def cleanup_expired_sessions(base_upload_dir: str = "./uploads", 
+def cleanup_expired_sessions(base_upload_dir: str = "./uploads",
                            base_vector_dir: str = "./vector_store",
-                           max_age_hours: int = 24):
-    """清理过期的会话数据"""
+                           base_temp_dir: str = "./temp",
+                           max_age_hours: int = 24,
+                           cleanup_empty_dirs: bool = True):
+    """清理过期的会话数据和空目录"""
     try:
         current_time = time.time()
         cutoff_time = current_time - (max_age_hours * 3600)
-        
+
         cleaned_count = 0
-        
-        # 清理上传目录
-        if os.path.exists(base_upload_dir):
-            for session_dir in os.listdir(base_upload_dir):
+        empty_dirs_cleaned = 0
+
+        # 要清理的目录列表
+        dirs_to_clean = [
+            (base_upload_dir, "上传"),
+            (base_vector_dir, "向量存储"),
+            (base_temp_dir, "临时文件")
+        ]
+
+        for base_dir, dir_type in dirs_to_clean:
+            if not os.path.exists(base_dir):
+                continue
+
+            for session_dir in os.listdir(base_dir):
                 if session_dir.startswith("session_"):
-                    session_path = os.path.join(base_upload_dir, session_dir)
+                    session_path = os.path.join(base_dir, session_dir)
                     if os.path.isdir(session_path):
                         # 从会话ID中提取时间戳
                         try:
@@ -186,29 +198,55 @@ def cleanup_expired_sessions(base_upload_dir: str = "./uploads",
                                 import shutil
                                 shutil.rmtree(session_path)
                                 cleaned_count += 1
-                                logger.info(f"清理过期会话上传目录: {session_dir}")
+                                logger.info(f"清理过期会话{dir_type}目录: {session_dir}")
                         except (IndexError, ValueError):
                             logger.warning(f"无法解析会话时间戳: {session_dir}")
-        
-        # 清理向量存储目录
-        if os.path.exists(base_vector_dir):
-            for session_dir in os.listdir(base_vector_dir):
-                if session_dir.startswith("session_"):
-                    session_path = os.path.join(base_vector_dir, session_dir)
-                    if os.path.isdir(session_path):
-                        try:
-                            timestamp = int(session_dir.split("_")[1])
-                            if timestamp < cutoff_time:
-                                import shutil
-                                shutil.rmtree(session_path)
-                                cleaned_count += 1
-                                logger.info(f"清理过期会话向量目录: {session_dir}")
-                        except (IndexError, ValueError):
-                            logger.warning(f"无法解析会话时间戳: {session_dir}")
-        
-        logger.info(f"会话清理完成，清理了 {cleaned_count} 个过期会话")
+
+        # 清理空目录（如果启用）
+        if cleanup_empty_dirs:
+            for base_dir, dir_type in dirs_to_clean:
+                empty_count = _cleanup_empty_directories(base_dir, dir_type)
+                empty_dirs_cleaned += empty_count
+
+        total_message = f"会话清理完成，清理了 {cleaned_count} 个过期会话"
+        if cleanup_empty_dirs and empty_dirs_cleaned > 0:
+            total_message += f"，清理了 {empty_dirs_cleaned} 个空目录"
+        logger.info(total_message)
+
         return cleaned_count
-        
+
     except Exception as e:
         logger.error(f"清理过期会话失败: {e}")
         return 0
+
+
+def _cleanup_empty_directories(base_dir: str, dir_type: str) -> int:
+    """清理指定目录下的空目录"""
+    if not os.path.exists(base_dir):
+        return 0
+
+    cleaned_count = 0
+
+    try:
+        # 递归查找并删除空目录
+        for root, _, _ in os.walk(base_dir, topdown=False):
+            # 跳过基础目录本身
+            if root == base_dir:
+                continue
+
+            # 检查目录是否为空
+            try:
+                if not os.listdir(root):
+                    os.rmdir(root)
+                    cleaned_count += 1
+                    relative_path = os.path.relpath(root, base_dir)
+                    logger.info(f"清理空{dir_type}目录: {relative_path}")
+            except OSError as e:
+                # 目录可能不为空或有权限问题
+                logger.debug(f"无法删除目录 {root}: {e}")
+                continue
+
+    except Exception as e:
+        logger.error(f"清理{dir_type}空目录时出错: {e}")
+
+    return cleaned_count

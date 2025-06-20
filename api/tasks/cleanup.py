@@ -65,7 +65,9 @@ class CleanupManager:
             cleaned_count = cleanup_expired_sessions(
                 base_upload_dir="./uploads",
                 base_vector_dir="./vector_store",
-                max_age_hours=24  # 24小时后过期
+                base_temp_dir="./temp",
+                max_age_hours=24,  # 24小时后过期
+                cleanup_empty_dirs=True  # 同时清理空目录
             )
             logger.info(f"过期会话清理完成，清理了 {cleaned_count} 个会话")
         except Exception as e:
@@ -103,7 +105,9 @@ class CleanupManager:
             session_count = cleanup_expired_sessions(
                 base_upload_dir="./uploads",
                 base_vector_dir="./vector_store",
-                max_age_hours=max_age_hours
+                base_temp_dir="./temp",
+                max_age_hours=max_age_hours,
+                cleanup_empty_dirs=True
             )
             
             # 清理文件
