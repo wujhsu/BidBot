@@ -139,13 +139,14 @@ async def http_exception_handler(request, exc: HTTPException):
     Returns:
         JSON错误响应
     """
+    error_response = ErrorResponse(
+        error_code=f"HTTP_{exc.status_code}",
+        error_message=exc.detail,
+        timestamp=datetime.now()
+    )
     return JSONResponse(
         status_code=exc.status_code,
-        content=ErrorResponse(
-            error_code=f"HTTP_{exc.status_code}",
-            error_message=exc.detail,
-            timestamp=datetime.now()
-        ).model_dump()
+        content=error_response.model_dump(mode='json')
     )
 
 

@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from loguru import logger
 
 from api.services.file_service import file_service
+from api.services.task_service import task_service
 
 router = APIRouter(prefix="/api", tags=["文件服务"])
 
@@ -147,3 +148,95 @@ async def download_file(file_id: str, file_type: str = "pdf"):
             status_code=500,
             detail=f"下载文件失败: {str(e)}"
         )
+
+
+@router.get("/download-report/{task_id}")
+async def download_report(task_id: str, format: str = "md"):
+    """
+    下载分析报告
+
+    Args:
+        task_id: 任务ID
+        format: 文件格式 ("md" 或 "pdf")，默认为md
+
+    Returns:
+        报告文件下载响应
+
+    Raises:
+        HTTPException: 任务不存在、报告文件不存在或任务未完成
+    """
+    try:
+        logger.info(f"请求下载分析报告: {task_id}, 格式: {format}")
+
+        # 获取任务信息
+        task_status = task_service.get_task_status(task_id)
+        if not task_status:
+            raise HTTPException(
+                status_code=404,
+                detail=f"任务不存在: {task_id}"
+            )
+
+        # 检查任务状态
+        if task_status.status != "completed":
+            raise HTTPException(
+                status_code=400,
+                detail=f"任务尚未完成，当前状态: {task_status.status}"
+            )
+
+        # 获取报告文件路径
+        report_file_path = task_status.report_file_path
+        if not report_file_path:
+            raise HTTPException(
+                status_code=404,
+                detail="报告文件路径不存在"
+            )
+
+        # 检查文件是否存在
+        if not os.path.exists(report_file_path):
+            logger.error(f"报告文件不存在: {report_file_path}")
+            raise HTTPException(
+                status_code=404,
+                detail="报告文件不存在"
+            )
+
+        # 生成友好的文件名（基于原始文档名）
+        filename = "分析报告.md"
+        if task_status.result and task_status.result.document_name:
+            safe_doc_name = "".join(c for c in task_status.result.document_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            filename = f"投标分析报告_{safe_doc_name}.md"
+
+        # 目前只支持MD格式，预留PDF格式扩展
+        if format.lower() == "pdf":
+            raise HTTPException(
+                status_code=400,
+                detail="PDF格式暂不支持，请使用md格式"
+            )
+
+        # 返回文件下载响应
+        # 对文件名进行URL编码以支持中文字符
+        import urllib.parse
+        encoded_filename = urllib.parse.quote(filename.encode('utf-8'))
+
+        return FileResponse(
+            path=report_file_path,
+            media_type="text/markdown",
+            filename=filename,
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"下载分析报告异常: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"下载分析报告失败: {str(e)}"
+        )
+
+
+
+
+
+

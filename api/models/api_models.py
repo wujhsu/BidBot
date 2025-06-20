@@ -63,6 +63,7 @@ class AnalysisStatusResponse(BaseModel):
     progress: Optional[AnalysisProgress] = Field(None, description="进度信息")
     result: Optional[BiddingAnalysisResult] = Field(None, description="分析结果")
     error_message: Optional[str] = Field(None, description="错误信息")
+    report_file_path: Optional[str] = Field(None, description="分析报告文件路径")
     created_at: datetime = Field(description="创建时间")
     updated_at: datetime = Field(description="更新时间")
 
@@ -73,6 +74,11 @@ class ErrorResponse(BaseModel):
     error_message: str = Field(description="错误信息")
     details: Optional[Dict[str, Any]] = Field(None, description="错误详情")
     timestamp: datetime = Field(default_factory=datetime.now, description="错误时间")
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 
 class HealthCheckResponse(BaseModel):

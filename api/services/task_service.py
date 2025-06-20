@@ -105,6 +105,7 @@ class TaskService:
             ),
             "result": None,
             "error_message": None,
+            "report_file_path": None,  # 添加报告文件路径字段
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
             "options": options or {}
@@ -270,7 +271,7 @@ class TaskService:
     def _update_task_result(self, task_id: str, status: TaskStatus, result: Dict[str, Any]) -> None:
         """
         更新任务结果
-        
+
         Args:
             task_id: 任务ID
             status: 任务状态
@@ -279,9 +280,16 @@ class TaskService:
         task_info = self.tasks.get(task_id)
         if not task_info:
             return
-        
+
         task_info["status"] = status
         task_info["result"] = result.get("analysis_result")
+
+        # 从分析结果中提取报告文件路径
+        report_file_path = self._extract_report_file_path(result)
+        if report_file_path:
+            task_info["report_file_path"] = report_file_path
+            logger.info(f"任务 {task_id} 报告文件路径: {report_file_path}")
+
         task_info["progress"] = AnalysisProgress(
             current_step="completed",
             progress_percentage=100,
@@ -289,7 +297,39 @@ class TaskService:
             agent_progress=None  # 完成时清除并行进度数据
         )
         task_info["updated_at"] = datetime.now()
-    
+
+    def _extract_report_file_path(self, result: Dict[str, Any]) -> Optional[str]:
+        """
+        从分析结果中提取报告文件路径
+
+        Args:
+            result: 分析结果
+
+        Returns:
+            报告文件路径，如果未找到返回None
+        """
+        try:
+            analysis_result = result.get("analysis_result")
+            if not analysis_result:
+                return None
+
+            processing_notes = analysis_result.processing_notes if hasattr(analysis_result, 'processing_notes') else []
+
+            # 使用正则表达式匹配'报告已保存到: '后的路径
+            import re
+            for note in processing_notes:
+                match = re.search(r'报告已保存到:\s*(.+)', note)
+                if match:
+                    file_path = match.group(1).strip()
+                    logger.debug(f"从processing_notes中提取到报告路径: {file_path}")
+                    return file_path
+
+            return None
+
+        except Exception as e:
+            logger.error(f"提取报告文件路径失败: {e}")
+            return None
+
     def _update_task_error(self, task_id: str, status: TaskStatus, error_message: str) -> None:
         """
         更新任务错误
@@ -334,6 +374,7 @@ class TaskService:
             progress=task_info["progress"],
             result=task_info["result"],
             error_message=task_info["error_message"],
+            report_file_path=task_info.get("report_file_path"),  # 添加报告文件路径
             created_at=task_info["created_at"],
             updated_at=task_info["updated_at"]
         )

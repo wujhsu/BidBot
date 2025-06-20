@@ -766,18 +766,28 @@ class OutputFormatter:
     
     def _save_report(self, content: str, document_name: str) -> str:
         """保存报告到文件"""
-        # 生成文件名
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # 获取当前时间
+        now = datetime.now()
+
+        # 按日期创建子目录：output/年份/月日/
+        date_dir = now.strftime("%Y/%m%d")
+        output_dir = os.path.join(settings.output_dir, date_dir)
+
+        # 确保目录存在
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 生成文件名（保持现有格式）
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
         safe_doc_name = "".join(c for c in document_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         filename = f"投标分析报告_{safe_doc_name}_{timestamp}.md"
-        
+
         # 完整路径
-        output_path = os.path.join(settings.output_dir, filename)
-        
+        output_path = os.path.join(output_dir, filename)
+
         # 保存文件
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        
+
         return output_path
 
 def create_output_formatter_node():
