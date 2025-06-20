@@ -15,18 +15,27 @@ from config.settings import settings
 class VectorStoreManager:
     """向量存储管理器"""
     
-    def __init__(self, embeddings: Embeddings, persist_directory: Optional[str] = None):
+    def __init__(self, embeddings: Embeddings, persist_directory: Optional[str] = None, session_id: Optional[str] = None):
         """
         初始化向量存储管理器
-        
+
         Args:
             embeddings: 嵌入模型
-            persist_directory: 持久化目录
+            persist_directory: 持久化目录（如果提供session_id，会被覆盖为会话级目录）
+            session_id: 会话ID，用于创建会话级向量存储
         """
         self.embeddings = embeddings
-        self.persist_directory = persist_directory or settings.vector_store_path
+        self.session_id = session_id
+
+        # 如果提供了会话ID，使用会话级目录
+        if session_id:
+            base_dir = persist_directory or settings.vector_store_path
+            self.persist_directory = os.path.join(base_dir, session_id)
+        else:
+            self.persist_directory = persist_directory or settings.vector_store_path
+
         self.vector_store: Optional[Chroma] = None
-        
+
         # 确保目录存在
         os.makedirs(self.persist_directory, exist_ok=True)
     
@@ -192,7 +201,7 @@ class VectorStoreManager:
             raise
     
     def clear_vector_store(self) -> None:
-        """清空向量存储"""
+        """清空向量存储（会话级安全清理）"""
         try:
             # 先关闭现有的向量存储连接
             if self.vector_store is not None:
@@ -205,32 +214,50 @@ class VectorStoreManager:
 
             # 等待一下让文件句柄释放
             import time
-            time.sleep(0.5)
+            time.sleep(1.0)  # 增加等待时间
 
-            if os.path.exists(self.persist_directory):
-                # 简化清理逻辑，直接清空内容而不是删除整个目录
-                self._clear_directory_contents(self.persist_directory)
-                logger.info("向量存储已清空")
+            # 对于会话级目录，采用更安全的清理策略
+            if self.session_id and os.path.exists(self.persist_directory):
+                logger.info(f"会话 {self.session_id}: 开始清理向量存储目录")
+
+                # 尝试多次清理，处理文件锁定问题
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        self._safe_clear_directory_contents(self.persist_directory)
+                        logger.info(f"会话 {self.session_id}: 向量存储已清空")
+                        break
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"会话 {self.session_id}: 清理尝试 {attempt + 1} 失败，重试中: {e}")
+                            time.sleep(2.0)  # 等待更长时间
+                        else:
+                            logger.warning(f"会话 {self.session_id}: 清理失败，将使用新的子目录: {e}")
+                            # 如果清理失败，创建一个新的子目录
+                            import uuid
+                            new_subdir = os.path.join(self.persist_directory, f"retry_{uuid.uuid4().hex[:8]}")
+                            os.makedirs(new_subdir, exist_ok=True)
+                            self.persist_directory = new_subdir
+                            logger.info(f"会话 {self.session_id}: 使用新的向量存储目录: {new_subdir}")
             else:
-                # 如果目录不存在，直接创建
-                os.makedirs(self.persist_directory, exist_ok=True)
-                logger.info("创建新的向量存储目录")
+                # 非会话模式或目录不存在
+                if not os.path.exists(self.persist_directory):
+                    os.makedirs(self.persist_directory, exist_ok=True)
+                    logger.info("创建新的向量存储目录")
 
         except Exception as e:
             logger.error(f"清空向量存储失败: {e}")
-            # 如果清空失败，尝试重置到默认目录
-            try:
-                default_dir = "./vector_store"
-                if self.persist_directory != default_dir:
-                    self.persist_directory = default_dir
-                    os.makedirs(self.persist_directory, exist_ok=True)
-                    logger.info(f"重置到默认向量存储目录: {self.persist_directory}")
-                else:
-                    # 如果已经是默认目录，则不创建新目录，直接使用现有的
-                    logger.warning("使用现有向量存储目录，可能存在历史数据")
-            except Exception as e2:
-                logger.error(f"重置向量存储目录也失败: {e2}")
-                raise e
+            # 如果是会话模式，创建新的子目录
+            if self.session_id:
+                try:
+                    import uuid
+                    fallback_dir = os.path.join(os.path.dirname(self.persist_directory), f"fallback_{uuid.uuid4().hex[:8]}")
+                    os.makedirs(fallback_dir, exist_ok=True)
+                    self.persist_directory = fallback_dir
+                    logger.info(f"会话 {self.session_id}: 使用备用向量存储目录: {fallback_dir}")
+                except Exception as e2:
+                    logger.error(f"创建备用目录也失败: {e2}")
+                    raise e
 
     def _clear_directory_contents(self, directory: str) -> None:
         """清空目录内容而不删除目录本身"""
@@ -253,6 +280,78 @@ class VectorStoreManager:
                 else:
                     # 最后一次尝试失败，抛出异常让上层处理
                     raise e
+
+    def _safe_clear_directory_contents(self, directory: str) -> None:
+        """安全清空目录内容（处理Windows文件锁定问题）"""
+        import time
+        import gc
+
+        # 强制垃圾回收，释放可能的文件句柄
+        gc.collect()
+        time.sleep(0.5)
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                items_to_remove = []
+
+                # 先收集所有要删除的项目
+                for item in os.listdir(directory):
+                    item_path = os.path.join(directory, item)
+                    items_to_remove.append((item, item_path))
+
+                # 逐个删除
+                for item_name, item_path in items_to_remove:
+                    try:
+                        if os.path.isdir(item_path):
+                            # 对于目录，先尝试删除内容
+                            self._force_remove_directory(item_path)
+                        else:
+                            # 对于文件，先尝试设置为可写
+                            try:
+                                os.chmod(item_path, 0o777)
+                            except:
+                                pass
+                            os.remove(item_path)
+                    except Exception as e:
+                        logger.warning(f"删除项目 {item_name} 失败: {e}")
+                        continue
+
+                # 检查是否还有剩余文件
+                remaining = os.listdir(directory)
+                if not remaining:
+                    return  # 成功清空
+                else:
+                    logger.warning(f"尝试 {attempt + 1}: 仍有 {len(remaining)} 个项目未删除")
+
+            except Exception as e:
+                logger.warning(f"清空目录尝试 {attempt + 1} 失败: {e}")
+
+            if attempt < max_retries - 1:
+                time.sleep(2.0)  # 等待更长时间
+
+        # 如果所有尝试都失败，抛出异常
+        remaining = os.listdir(directory)
+        if remaining:
+            raise OSError(f"无法完全清空目录，剩余 {len(remaining)} 个项目")
+
+    def _force_remove_directory(self, dir_path: str) -> None:
+        """强制删除目录"""
+        import stat
+
+        def handle_remove_readonly(func, path, exc):
+            """处理只读文件删除"""
+            try:
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+            except:
+                pass
+
+        try:
+            shutil.rmtree(dir_path, onerror=handle_remove_readonly)
+        except Exception as e:
+            logger.warning(f"强制删除目录失败: {e}")
+            raise
 
 
 

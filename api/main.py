@@ -20,6 +20,7 @@ sys.path.insert(0, str(project_root))
 from config.settings import settings
 from api.routers import upload, analysis, files
 from api.models.api_models import HealthCheckResponse, ErrorResponse
+from api.middleware.session import SessionMiddleware
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -38,6 +39,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 添加会话管理中间件
+app.add_middleware(SessionMiddleware)
 
 # 注册路由
 app.include_router(upload.router)
@@ -158,14 +162,18 @@ async def general_exception_handler(request, exc: Exception):
         JSON错误响应
     """
     logger.error(f"未处理的异常: {exc}")
+
+    # 创建错误响应，确保时间戳可以序列化
+    error_response = ErrorResponse(
+        error_code="INTERNAL_SERVER_ERROR",
+        error_message="服务器内部错误",
+        details={"exception": str(exc)},
+        timestamp=datetime.now()
+    )
+
     return JSONResponse(
         status_code=500,
-        content=ErrorResponse(
-            error_code="INTERNAL_SERVER_ERROR",
-            error_message="服务器内部错误",
-            details={"exception": str(exc)},
-            timestamp=datetime.now()
-        ).model_dump()
+        content=error_response.model_dump(mode='json')
     )
 
 
@@ -175,13 +183,19 @@ async def startup_event():
     """应用启动事件"""
     logger.info("智能投标助手 API 服务启动")
     logger.info(f"API文档地址: http://localhost:8000/docs")
-    
+
     # 创建必要的目录
     os.makedirs("./uploads", exist_ok=True)
     os.makedirs("./temp", exist_ok=True)
-    
-    # 启动定期清理任务（可选）
-    # asyncio.create_task(periodic_cleanup())
+    os.makedirs("./vector_store", exist_ok=True)
+
+    # 启动简化的会话清理任务
+    try:
+        from api.tasks.simple_cleanup import start_simple_cleanup
+        start_simple_cleanup()
+        logger.info("简化清理任务已启动")
+    except Exception as e:
+        logger.warning(f"启动清理任务失败: {e}")
 
 
 # 关闭事件
@@ -189,6 +203,14 @@ async def startup_event():
 async def shutdown_event():
     """应用关闭事件"""
     logger.info("智能投标助手 API 服务关闭")
+
+    # 停止清理任务
+    try:
+        from api.tasks.simple_cleanup import stop_simple_cleanup
+        stop_simple_cleanup()
+        logger.info("清理任务已停止")
+    except Exception as e:
+        logger.warning(f"停止清理任务失败: {e}")
 
 
 # 定期清理任务（可选）

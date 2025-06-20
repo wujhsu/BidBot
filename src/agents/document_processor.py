@@ -15,14 +15,24 @@ import os
 class DocumentProcessor:
     """文档预处理节点"""
     
-    def __init__(self):
-        """初始化文档预处理器"""
+    def __init__(self, session_id: str = None):
+        """
+        初始化文档预处理器
+
+        Args:
+            session_id: 会话ID，用于创建会话级向量存储
+        """
         self.document_loader = DocumentLoader(
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap
         )
         self.embeddings = LLMFactory.create_embeddings()
-        self.vector_store_manager = VectorStoreManager(self.embeddings)
+        self.session_id = session_id
+        # 创建会话级向量存储管理器
+        self.vector_store_manager = VectorStoreManager(
+            self.embeddings,
+            session_id=session_id
+        )
 
     def process_document(self, state: GraphStateModel) -> GraphStateModel:
         """
@@ -52,22 +62,56 @@ class DocumentProcessor:
             state.document_content = full_text
             state.chunks = [doc.page_content for doc in documents]
             
-            # 创建向量存储（根据配置决定是否隔离）
-            if settings.clear_vector_store_on_new_document:
-                # 使用隔离模式，确保新文档不受历史数据影响
-                vector_store = self.vector_store_manager.create_isolated_vector_store(
-                    documents,
-                    state.document_path
-                )
-                logger.info("使用隔离模式创建向量存储，历史数据已清空")
+            # 创建会话级向量存储（每个会话完全隔离）
+            if self.session_id:
+                # 会话级隔离：为每个文档创建独立的向量存储
+                logger.info(f"会话 {self.session_id}: 开始创建会话级向量存储")
+
+                # 生成唯一的集合名称，包含文档信息
+                import time
+                doc_hash = abs(hash(state.document_path)) % 10000
+                timestamp = int(time.time())
+                collection_name = f"session_{self.session_id}_doc_{doc_hash}_{timestamp}"
+
+                try:
+                    # 先尝试清空会话的向量存储目录
+                    self.vector_store_manager.clear_vector_store()
+
+                    # 创建新的向量存储
+                    vector_store = self.vector_store_manager.create_vector_store(
+                        documents,
+                        collection_name=collection_name
+                    )
+                    logger.info(f"会话 {self.session_id}: 创建会话级向量存储成功，文档数量: {len(documents)}")
+
+                except Exception as e:
+                    logger.warning(f"会话 {self.session_id}: 清理向量存储失败，尝试直接创建: {e}")
+                    # 如果清理失败，直接创建新的向量存储
+                    try:
+                        vector_store = self.vector_store_manager.create_vector_store(
+                            documents,
+                            collection_name=collection_name
+                        )
+                        logger.info(f"会话 {self.session_id}: 直接创建向量存储成功")
+                    except Exception as e2:
+                        logger.error(f"会话 {self.session_id}: 创建向量存储也失败: {e2}")
+                        raise e2
+
             else:
-                # 使用传统模式，可能存在历史数据交叉污染
-                collection_name = f"doc_{hash(state.document_path) % 10000}"
-                vector_store = self.vector_store_manager.create_vector_store(
-                    documents,
-                    collection_name=collection_name
-                )
-                logger.warning("使用传统模式创建向量存储，可能存在历史数据交叉污染风险")
+                # 兼容模式：如果没有会话ID，使用传统方式
+                logger.warning("未提供会话ID，使用传统向量存储模式（可能存在多用户冲突）")
+                if settings.clear_vector_store_on_new_document:
+                    vector_store = self.vector_store_manager.create_isolated_vector_store(
+                        documents,
+                        state.document_path
+                    )
+                else:
+                    collection_name = f"doc_{hash(state.document_path) % 10000}"
+                    vector_store = self.vector_store_manager.create_vector_store(
+                        documents,
+                        collection_name=collection_name
+                    )
+
             state.vector_store = vector_store
             
             # 保持现有的分析结果，不要重新创建（避免覆盖已设置的document_name）
@@ -194,23 +238,28 @@ class DocumentProcessor:
         
         return state
 
-def create_document_processor_node():
-    """创建文档预处理节点函数"""
-    processor = DocumentProcessor()
-    
+def create_document_processor_node(session_id: str = None):
+    """
+    创建文档预处理节点函数
+
+    Args:
+        session_id: 会话ID，用于创建会话级处理器
+    """
+    processor = DocumentProcessor(session_id=session_id)
+
     def document_processor_node(state: Dict[str, Any]) -> Dict[str, Any]:
         """文档预处理节点函数"""
         # 转换为GraphStateModel对象
         graph_state = GraphStateModel(**state)
-        
+
         # 执行文档处理流程
         graph_state = processor.process_document(graph_state)
         if graph_state.current_step != "error":
             graph_state = processor.validate_document(graph_state)
         if graph_state.current_step != "error":
             graph_state = processor.extract_document_structure(graph_state)
-        
+
         # 转换回字典格式
         return graph_state.model_dump()
-    
+
     return document_processor_node

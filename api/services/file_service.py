@@ -19,54 +19,65 @@ from api.models.api_models import FileUploadResponse
 
 class FileService:
     """文件处理服务"""
-    
+
     def __init__(self, upload_dir: str = "./uploads", temp_dir: str = "./temp"):
         """
         初始化文件服务
-        
+
         Args:
-            upload_dir: 上传文件存储目录
-            temp_dir: 临时文件目录
+            upload_dir: 上传文件存储目录（会被会话中间件覆盖）
+            temp_dir: 临时文件目录（会被会话中间件覆盖）
         """
-        self.upload_dir = Path(upload_dir)
-        self.temp_dir = Path(temp_dir)
+        self.base_upload_dir = Path(upload_dir)
+        self.base_temp_dir = Path(temp_dir)
         self.converter = UnifiedDocumentConverter()
-        
-        # 创建必要的目录
-        self.upload_dir.mkdir(exist_ok=True)
-        self.temp_dir.mkdir(exist_ok=True)
-        
+
+        # 创建基础目录
+        self.base_upload_dir.mkdir(exist_ok=True)
+        self.base_temp_dir.mkdir(exist_ok=True)
+
         # 支持的文件格式
         self.supported_formats = {'.pdf', '.doc', '.docx'}
-        
+
         # 最大文件大小 (50MB)
         self.max_file_size = 50 * 1024 * 1024
-        
+
         # 文件信息存储（实际项目中应该使用数据库）
+        # 注意：这里使用全局存储，但文件路径是会话隔离的
         self.file_registry: Dict[str, Dict[str, Any]] = {}
     
-    async def upload_file(self, file: UploadFile) -> FileUploadResponse:
+    async def upload_file(self, file: UploadFile, session_upload_dir: str = None, session_temp_dir: str = None) -> FileUploadResponse:
         """
         上传文件
-        
+
         Args:
             file: 上传的文件
-            
+            session_upload_dir: 会话级上传目录
+            session_temp_dir: 会话级临时目录
+
         Returns:
             FileUploadResponse: 上传响应
-            
+
         Raises:
             HTTPException: 文件验证失败或上传失败
         """
         try:
             # 验证文件
             self._validate_file(file)
-            
+
+            # 使用会话级目录，如果没有提供则使用默认目录
+            upload_dir = Path(session_upload_dir) if session_upload_dir else self.base_upload_dir
+            temp_dir = Path(session_temp_dir) if session_temp_dir else self.base_temp_dir
+
+            # 确保目录存在
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            temp_dir.mkdir(parents=True, exist_ok=True)
+
             # 生成文件ID和路径
             file_id = str(uuid.uuid4())
             file_extension = Path(file.filename).suffix.lower()
             original_filename = f"{file_id}_original{file_extension}"
-            original_path = self.upload_dir / original_filename
+            original_path = upload_dir / original_filename
             
             # 保存原始文件
             await self._save_uploaded_file(file, original_path)
@@ -81,11 +92,11 @@ class FileService:
             if file_extension != '.pdf':
                 try:
                     pdf_filename = f"{file_id}.pdf"
-                    pdf_path = self.upload_dir / pdf_filename
-                    
+                    pdf_path = upload_dir / pdf_filename
+
                     # 使用现有的转换器
                     converted_pdf_path = self.converter.convert_to_pdf(str(original_path))
-                    
+
                     # 移动转换后的文件到正确位置
                     if converted_pdf_path != str(original_path):
                         shutil.move(converted_pdf_path, pdf_path)
@@ -101,7 +112,7 @@ class FileService:
             else:
                 # PDF文件直接复制
                 pdf_filename = f"{file_id}.pdf"
-                pdf_path = self.upload_dir / pdf_filename
+                pdf_path = upload_dir / pdf_filename
                 shutil.copy2(original_path, pdf_path)
                 is_converted = False
             

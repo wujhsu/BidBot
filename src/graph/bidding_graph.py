@@ -18,8 +18,14 @@ from src.agents.parallel_aggregator import create_parallel_aggregator_node, para
 class BiddingAnalysisGraph:
     """智能投标助手分析图"""
     
-    def __init__(self):
-        """初始化分析图"""
+    def __init__(self, session_id: str = None):
+        """
+        初始化分析图
+
+        Args:
+            session_id: 会话ID，用于创建会话级节点
+        """
+        self.session_id = session_id
         self.graph = self._create_graph()
         self.progress_callback: Optional[Callable[[str], None]] = None
     
@@ -29,8 +35,8 @@ class BiddingAnalysisGraph:
         # 创建状态图
         workflow = StateGraph(GraphState)
 
-        # 添加节点
-        workflow.add_node("document_processor", create_document_processor_node())
+        # 添加节点（传递会话ID给需要的节点）
+        workflow.add_node("document_processor", create_document_processor_node(self.session_id))
         workflow.add_node("basic_info_extractor", create_basic_info_extractor_node())
         workflow.add_node("scoring_analyzer", create_scoring_analyzer_node())
         workflow.add_node("contract_info_extractor", create_contract_info_extractor_node())

@@ -3,18 +3,20 @@
 File Upload Router
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 
 from api.models.api_models import FileUploadResponse, ErrorResponse
 from api.services.file_service import file_service
+from api.middleware.session import SessionManager
 
 router = APIRouter(prefix="/api", tags=["文件上传"])
 
 
 @router.post("/upload", response_model=FileUploadResponse)
 async def upload_file(
+    request: Request,
     file: UploadFile = File(..., description="上传的文件（支持 .pdf, .doc, .docx 格式）")
 ) -> FileUploadResponse:
     """
@@ -36,12 +38,21 @@ async def upload_file(
         HTTPException: 文件验证失败或上传失败
     """
     try:
-        logger.info(f"开始上传文件: {file.filename}")
-        
-        # 调用文件服务处理上传
-        result = await file_service.upload_file(file)
-        
-        logger.info(f"文件上传成功: {file.filename} (ID: {result.file_id})")
+        # 获取会话信息
+        session_id = SessionManager.get_session_id(request)
+        session_upload_dir = SessionManager.get_session_upload_dir(request)
+        session_temp_dir = SessionManager.get_session_temp_dir(request)
+
+        logger.info(f"会话 {session_id} 开始上传文件: {file.filename}")
+
+        # 调用文件服务处理上传，传递会话目录
+        result = await file_service.upload_file(
+            file,
+            session_upload_dir=session_upload_dir,
+            session_temp_dir=session_temp_dir
+        )
+
+        logger.info(f"会话 {session_id} 文件上传成功: {file.filename} (ID: {result.file_id})")
         return result
         
     except HTTPException:

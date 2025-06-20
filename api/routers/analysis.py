@@ -3,41 +3,47 @@
 Document Analysis Router
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
 
 from api.models.api_models import (
-    AnalysisRequest, 
-    AnalysisTaskResponse, 
+    AnalysisRequest,
+    AnalysisTaskResponse,
     AnalysisStatusResponse,
     TaskStatus
 )
 from api.services.task_service import task_service
+from api.middleware.session import SessionManager
 
 router = APIRouter(prefix="/api", tags=["文档分析"])
 
 
 @router.post("/analyze", response_model=AnalysisTaskResponse)
-async def start_analysis(request: AnalysisRequest) -> AnalysisTaskResponse:
+async def start_analysis(analysis_request: AnalysisRequest, request: Request) -> AnalysisTaskResponse:
     """
     启动文档分析任务
-    
+
     Args:
-        request: 分析请求，包含文件ID和分析选项
-        
+        analysis_request: 分析请求，包含文件ID和分析选项
+        request: HTTP请求对象，用于获取会话信息
+
     Returns:
         AnalysisTaskResponse: 任务信息，包含任务ID
-        
+
     Raises:
         HTTPException: 文件不存在或任务创建失败
     """
     try:
-        logger.info(f"开始创建分析任务，文件ID: {request.file_id}")
-        
-        # 创建分析任务
+        # 获取会话信息
+        session_id = SessionManager.get_session_id(request)
+
+        logger.info(f"会话 {session_id} 开始创建分析任务，文件ID: {analysis_request.file_id}")
+
+        # 创建分析任务，传递会话ID
         task_id = await task_service.create_analysis_task(
-            file_id=request.file_id,
-            options=request.options
+            file_id=analysis_request.file_id,
+            session_id=session_id,
+            options=analysis_request.options
         )
         
         # 获取任务状态
@@ -50,13 +56,13 @@ async def start_analysis(request: AnalysisRequest) -> AnalysisTaskResponse:
         
         response = AnalysisTaskResponse(
             task_id=task_id,
-            file_id=request.file_id,
+            file_id=analysis_request.file_id,
             status=task_status.status,
             created_at=task_status.created_at,
             message="分析任务已创建，正在处理中..."
         )
-        
-        logger.info(f"分析任务创建成功: {task_id}")
+
+        logger.info(f"会话 {session_id} 分析任务创建成功: {task_id}")
         return response
         
     except ValueError as e:

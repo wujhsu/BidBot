@@ -105,7 +105,7 @@ class ScoringAnalyzer:
 文档片段：
 {document_chunks}
 
-请严格按照以下JSON格式提取信息：
+请严格按照以下JSON格式提取信息，注意JSON格式的正确性：
 
 {{
     "scoring_items": [
@@ -118,6 +118,13 @@ class ScoringAnalyzer:
         }}
     ]
 }}
+
+**JSON格式要求**：
+- 所有字符串值必须用双引号包围
+- 字符串内的双引号必须转义为 \\"
+- 不要在JSON中使用单引号
+- 确保所有括号和逗号正确匹配
+- criteria字段如果包含复杂文本，请确保正确转义特殊字符
 
 重要提取规则：
 1. **优先查找评分表格、附表、评分细则表**：
@@ -142,6 +149,11 @@ class ScoringAnalyzer:
    - 逐项列出所有评分项、分值、评分标准
    - 按技术、商务、价格等类别分类
    - 严格忠于原文内容，不要遗漏任何评分项
+
+6. **文本处理要求**：
+   - criteria字段中的复杂评分标准描述要完整保留
+   - 如果评分标准包含分号、引号等特殊字符，请正确转义
+   - 保持原文的完整性和准确性
 """
         return PromptTemplate(
             input_variables=["document_chunks"],
@@ -282,17 +294,29 @@ class ScoringAnalyzer:
                     logger.warning(f"直接JSON解析失败: {e}")
                     logger.debug(f"原始JSON字符串长度: {len(json_str)}")
 
-                    # 尝试清理和修复JSON
-                    cleaned_json = self._clean_json_string(json_str)
-                    if cleaned_json:
+                    # 尝试多层次修复策略
+                    for attempt in range(3):
                         try:
-                            result = json.loads(cleaned_json)
-                            logger.info("JSON清理后解析成功")
-                            return result
+                            if attempt == 0:
+                                # 第一次尝试：基础清理
+                                cleaned_json = self._clean_json_string(json_str)
+                            elif attempt == 1:
+                                # 第二次尝试：更激进的修复
+                                cleaned_json = self._aggressive_json_fix(json_str)
+                            else:
+                                # 第三次尝试：重构JSON
+                                cleaned_json = self._reconstruct_json(json_str)
+
+                            if cleaned_json:
+                                result = json.loads(cleaned_json)
+                                logger.info(f"JSON修复成功（尝试 {attempt + 1}）")
+                                return result
                         except json.JSONDecodeError as e2:
-                            logger.error(f"清理后JSON解析仍然失败: {e2}")
-                            # 记录更多调试信息
-                            self._log_json_debug_info(json_str, e2)
+                            logger.debug(f"修复尝试 {attempt + 1} 失败: {e2}")
+                            continue
+
+                    # 记录详细调试信息
+                    self._log_json_debug_info(json_str, e)
 
                     # 尝试备用解析策略
                     backup_result = self._backup_parse_strategy(response)
@@ -319,17 +343,156 @@ class ScoringAnalyzer:
             # 1. 移除对象或数组末尾的多余逗号
             json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
 
-            # 2. 修复未转义的引号（简单情况）
-            # 这个比较复杂，先跳过，因为可能误修复
+            # 2. 修复字符串中的未转义引号
+            # 这是一个更安全的方法，专门处理字符串值中的引号
+            def fix_quotes_in_strings(match):
+                """修复字符串值中的引号"""
+                field_name = match.group(1)
+                content = match.group(2)
+                # 转义内容中的双引号，但保留原有的转义
+                content = content.replace('\\"', '___ESCAPED_QUOTE___')  # 临时标记已转义的引号
+                content = content.replace('"', '\\"')  # 转义未转义的引号
+                content = content.replace('___ESCAPED_QUOTE___', '\\"')  # 恢复已转义的引号
+                return f'"{field_name}": "{content}"'
 
-            # 3. 确保字符串值被正确引用
+            # 匹配字符串字段并修复其中的引号
+            json_str = re.sub(r'"(category|item_name|criteria|source_text|value)"\s*:\s*"([^"]*(?:"[^"]*)*)"',
+                            fix_quotes_in_strings, json_str)
+
+            # 3. 修复可能的换行符问题
+            # 将字符串值中的换行符转义
+            def fix_newlines_in_strings(match):
+                """修复字符串值中的换行符"""
+                field_name = match.group(1)
+                content = match.group(2)
+                # 转义换行符
+                content = content.replace('\n', '\\n').replace('\r', '\\r')
+                return f'"{field_name}": "{content}"'
+
+            # 再次处理可能的换行符
+            json_str = re.sub(r'"(category|item_name|criteria|source_text|value)"\s*:\s*"([^"]*)"',
+                            fix_newlines_in_strings, json_str)
+
+            # 4. 确保数字格式正确
             # 修复数字后面意外的字符
-            json_str = re.sub(r'(\d+)([a-zA-Z])', r'"\1\2"', json_str)
+            json_str = re.sub(r'"max_score"\s*:\s*(\d+(?:\.\d+)?)([a-zA-Z]+)', r'"max_score": "\1\2"', json_str)
+
+            # 5. 修复可能的尾随逗号
+            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
 
             return json_str
         except Exception as e:
             logger.error(f"JSON清理过程中出错: {e}")
             return ""
+
+    def _aggressive_json_fix(self, json_str: str) -> str:
+        """更激进的JSON修复策略"""
+        try:
+            # 移除BOM和不可见字符
+            json_str = json_str.strip().strip('\ufeff')
+
+            # 1. 修复缺少逗号的问题
+            # 在 } 后面如果直接跟 { 则添加逗号
+            json_str = re.sub(r'}\s*\n\s*{', '},\n            {', json_str)
+
+            # 2. 修复字符串中的未转义引号
+            def fix_string_field(match):
+                field_name = match.group(1)
+                field_value = match.group(2)
+
+                # 转义字符串值中的引号
+                # 先保护已经转义的引号
+                field_value = field_value.replace('\\"', '___ESCAPED_QUOTE___')
+                # 转义未转义的引号
+                field_value = field_value.replace('"', '\\"')
+                # 恢复已转义的引号
+                field_value = field_value.replace('___ESCAPED_QUOTE___', '\\"')
+
+                return f'"{field_name}": "{field_value}"'
+
+            # 应用字符串字段修复
+            json_str = re.sub(
+                r'"(category|item_name|criteria|source_text|value)"\s*:\s*"([^"]*(?:"[^"]*)*)"',
+                fix_string_field,
+                json_str,
+                flags=re.DOTALL
+            )
+
+            # 3. 修复尾随逗号
+            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+
+            # 4. 确保数组和对象正确闭合
+            open_braces = json_str.count('{')
+            close_braces = json_str.count('}')
+            if open_braces > close_braces:
+                json_str += '}' * (open_braces - close_braces)
+
+            open_brackets = json_str.count('[')
+            close_brackets = json_str.count(']')
+            if open_brackets > close_brackets:
+                json_str += ']' * (open_brackets - close_brackets)
+
+            # 5. 清理多余的转义和格式问题
+            json_str = json_str.replace('\\n', ' ').replace('\\r', ' ')
+
+            return json_str
+        except Exception as e:
+            logger.error(f"激进JSON修复过程中出错: {e}")
+            return ""
+
+    def _reconstruct_json(self, json_str: str) -> str:
+        """重构JSON - 从原始文本中提取关键信息并重新构建JSON"""
+        try:
+            # 提取所有可能的字段值
+            categories = re.findall(r'"category"\s*:\s*"([^"]*)"', json_str)
+            item_names = re.findall(r'"item_name"\s*:\s*"([^"]*)"', json_str)
+            max_scores = re.findall(r'"max_score"\s*:\s*([^,}\]]+)', json_str)
+
+            # 提取criteria字段（更复杂的处理）
+            criteria_list = []
+            criteria_matches = re.finditer(r'"criteria"\s*:\s*"([^"]*(?:"[^"]*)*)"', json_str, re.DOTALL)
+            for match in criteria_matches:
+                criteria_content = match.group(1)
+                # 清理和转义
+                criteria_content = criteria_content.replace('\\"', '"').replace('"', '\\"')
+                criteria_list.append(criteria_content)
+
+            # 提取source_text
+            source_texts = re.findall(r'"source_text"\s*:\s*"([^"]*)"', json_str)
+
+            # 重构JSON
+            scoring_items = []
+            max_items = max(len(item_names), len(max_scores), len(categories))
+
+            for i in range(max_items):
+                item = {
+                    "category": categories[i] if i < len(categories) else "技术分",
+                    "item_name": item_names[i] if i < len(item_names) else f"评分项{i+1}",
+                    "max_score": self._parse_score(max_scores[i]) if i < len(max_scores) else 0,
+                    "criteria": criteria_list[i] if i < len(criteria_list) else "从文档中提取的评分信息",
+                    "source_text": source_texts[i] if i < len(source_texts) else ""
+                }
+                scoring_items.append(item)
+
+            # 构建完整的JSON
+            result = {"scoring_items": scoring_items}
+            return json.dumps(result, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            logger.error(f"JSON重构过程中出错: {e}")
+            return ""
+
+    def _parse_score(self, score_str: str) -> float:
+        """解析分数字符串"""
+        try:
+            # 清理分数字符串
+            score_clean = re.sub(r'[^\d.]', '', score_str.strip())
+            if score_clean:
+                return float(score_clean)
+            else:
+                return 0.0
+        except:
+            return 0.0
 
     def _log_json_debug_info(self, json_str: str, error: json.JSONDecodeError):
         """记录JSON调试信息"""
@@ -360,53 +523,100 @@ class ScoringAnalyzer:
             # 尝试从响应中提取关键信息，即使JSON格式不完整
             result = {"scoring_items": []}
 
-            # 策略1: 查找评分项的模式
-            # 寻找类似 "item_name": "xxx", "max_score": xxx 的模式
-            item_pattern = r'"item_name"\s*:\s*"([^"]+)".*?"max_score"\s*:\s*([^,}\]]+)'
-            matches = re.findall(item_pattern, response, re.DOTALL | re.IGNORECASE)
+            # 策略1: 更健壮的评分项模式匹配
+            # 使用更宽松的模式来匹配评分项
 
-            for item_name, max_score in matches:
-                # 尝试提取更多信息
-                item_context_start = response.find(f'"item_name": "{item_name}"')
-                if item_context_start != -1:
-                    # 提取这个项目的完整上下文
-                    item_context_end = response.find('}, {', item_context_start)
-                    if item_context_end == -1:
-                        item_context_end = response.find('}]', item_context_start)
+            # 首先尝试匹配完整的评分项块
+            item_blocks = re.findall(
+                r'\{\s*"category"\s*:\s*"([^"]*)"[^}]*?"item_name"\s*:\s*"([^"]*)"[^}]*?"max_score"\s*:\s*([^,}\]]+)[^}]*?\}',
+                response, re.DOTALL | re.IGNORECASE
+            )
 
-                    if item_context_end != -1:
-                        item_context = response[item_context_start:item_context_end + 1]
+            for category, item_name, max_score in item_blocks:
+                # 查找对应的criteria和source_text
+                item_start = response.find(f'"item_name": "{item_name}"')
+                if item_start != -1:
+                    # 查找这个项目的完整上下文（更宽松的边界检测）
+                    item_end = item_start + 2000  # 限制搜索范围
+                    next_item = response.find('"item_name":', item_start + 1)
+                    if next_item != -1 and next_item < item_end:
+                        item_end = next_item
 
-                        # 提取其他字段
-                        category_match = re.search(r'"category"\s*:\s*"([^"]*)"', item_context)
-                        criteria_match = re.search(r'"criteria"\s*:\s*"([^"]*)"', item_context)
-                        source_match = re.search(r'"source_text"\s*:\s*"([^"]*)"', item_context)
+                    item_context = response[item_start:item_end]
+
+                    # 提取criteria（使用更宽松的模式）
+                    criteria_match = re.search(r'"criteria"\s*:\s*"([^"]*(?:"[^"]*)*)"', item_context, re.DOTALL)
+                    if not criteria_match:
+                        # 尝试更宽松的匹配
+                        criteria_match = re.search(r'"criteria"\s*:\s*"([^"]+)', item_context)
+
+                    # 提取source_text
+                    source_match = re.search(r'"source_text"\s*:\s*"([^"]*)"', item_context)
+
+                    # 处理max_score
+                    try:
+                        max_score_clean = re.sub(r'[^\d.]', '', max_score.strip())
+                        if max_score_clean:
+                            max_score_val = float(max_score_clean)
+                        else:
+                            max_score_val = max_score.strip().strip('"')
+                    except:
+                        max_score_val = max_score.strip().strip('"')
+
+                    scoring_item = {
+                        "category": category.strip(),
+                        "item_name": item_name.strip(),
+                        "max_score": max_score_val,
+                        "criteria": criteria_match.group(1).strip() if criteria_match else "从文档中提取的评分信息",
+                        "source_text": source_match.group(1).strip() if source_match else ""
+                    }
+                    result["scoring_items"].append(scoring_item)
+
+            # 策略2: 如果策略1没有找到足够结果，尝试简单的字段匹配
+            if len(result["scoring_items"]) < 3:  # 如果找到的项目太少
+                # 查找所有item_name
+                item_names = re.findall(r'"item_name"\s*:\s*"([^"]+)"', response)
+                max_scores = re.findall(r'"max_score"\s*:\s*([^,}\]]+)', response)
+                categories = re.findall(r'"category"\s*:\s*"([^"]*)"', response)
+
+                # 尝试配对这些信息
+                for i, item_name in enumerate(item_names):
+                    if i < len(max_scores):
+                        max_score = max_scores[i]
+                        category = categories[i] if i < len(categories) else "技术分"
 
                         # 处理max_score
                         try:
-                            max_score_val = float(max_score.strip().strip('"'))
+                            max_score_clean = re.sub(r'[^\d.]', '', max_score.strip())
+                            if max_score_clean:
+                                max_score_val = float(max_score_clean)
+                            else:
+                                max_score_val = max_score.strip().strip('"')
                         except:
                             max_score_val = max_score.strip().strip('"')
 
                         scoring_item = {
-                            "category": category_match.group(1) if category_match else "",
-                            "item_name": item_name,
+                            "category": category.strip(),
+                            "item_name": item_name.strip(),
                             "max_score": max_score_val,
-                            "criteria": criteria_match.group(1) if criteria_match else "",
-                            "source_text": source_match.group(1) if source_match else ""
+                            "criteria": "从文档中提取的评分信息",
+                            "source_text": ""
                         }
-                        result["scoring_items"].append(scoring_item)
 
-            # 策略2: 如果策略1没有找到结果，尝试更宽松的模式匹配
-            if not result["scoring_items"]:
+                        # 避免重复添加
+                        if not any(item["item_name"] == item_name for item in result["scoring_items"]):
+                            result["scoring_items"].append(scoring_item)
+
+            # 策略3: 如果前面的策略都没有找到足够结果，尝试更宽松的模式匹配
+            if len(result["scoring_items"]) < 2:
                 # 查找分散的评分信息
                 loose_patterns = [
-                    r'技术.*?(\d+).*?分',
-                    r'商务.*?(\d+).*?分',
-                    r'价格.*?(\d+).*?分',
-                    r'(\d+).*?分.*?技术',
-                    r'(\d+).*?分.*?商务',
-                    r'(\d+).*?分.*?价格'
+                    r'技术.*?(\d+(?:\.\d+)?).*?分',
+                    r'商务.*?(\d+(?:\.\d+)?).*?分',
+                    r'价格.*?(\d+(?:\.\d+)?).*?分',
+                    r'(\d+(?:\.\d+)?).*?分.*?技术',
+                    r'(\d+(?:\.\d+)?).*?分.*?商务',
+                    r'(\d+(?:\.\d+)?).*?分.*?价格'
                 ]
 
                 for pattern in loose_patterns:
@@ -434,7 +644,11 @@ class ScoringAnalyzer:
                                 "criteria": "从文档中提取的评分信息",
                                 "source_text": f"匹配模式: {pattern}"
                             }
-                            result["scoring_items"].append(scoring_item)
+
+                            # 避免重复添加相同的评分项
+                            if not any(item["item_name"] == item_name and item["max_score"] == score
+                                     for item in result["scoring_items"]):
+                                result["scoring_items"].append(scoring_item)
                         except ValueError:
                             continue
 

@@ -32,8 +32,8 @@ class TaskService:
         # 任务存储（实际项目中应该使用数据库）
         self.tasks: Dict[str, Dict[str, Any]] = {}
         
-        # 分析图实例
-        self.analysis_graph = BiddingAnalysisGraph()
+        # 分析图实例（会在运行时根据会话ID创建）
+        self.analysis_graph = None
         
         # 步骤映射（用于进度计算）
         self.step_mapping = {
@@ -63,17 +63,18 @@ class TaskService:
             "partial_extraction_completed"
         }
     
-    async def create_analysis_task(self, file_id: str, options: Optional[Dict[str, Any]] = None) -> str:
+    async def create_analysis_task(self, file_id: str, session_id: str = None, options: Optional[Dict[str, Any]] = None) -> str:
         """
         创建文档分析任务
-        
+
         Args:
             file_id: 文件ID
+            session_id: 会话ID，用于隔离不同用户的分析任务
             options: 分析选项
-            
+
         Returns:
             任务ID
-            
+
         Raises:
             ValueError: 文件不存在或无效
         """
@@ -93,6 +94,7 @@ class TaskService:
         task_info = {
             "task_id": task_id,
             "file_id": file_id,
+            "session_id": session_id,  # 添加会话ID
             "pdf_path": pdf_path,
             "status": TaskStatus.PENDING,
             "progress": AnalysisProgress(
@@ -138,7 +140,8 @@ class TaskService:
                 self.executor,
                 self._run_analysis_sync,
                 task_id,
-                task_info["pdf_path"]
+                task_info["pdf_path"],
+                task_info.get("session_id")  # 传递会话ID
             )
             
             # 检查结果
@@ -159,18 +162,22 @@ class TaskService:
             self._update_task_error(task_id, TaskStatus.FAILED, error_message)
             logger.error(f"分析任务异常: {task_id}, 错误: {error_message}")
     
-    def _run_analysis_sync(self, task_id: str, pdf_path: str) -> Dict[str, Any]:
+    def _run_analysis_sync(self, task_id: str, pdf_path: str, session_id: str = None) -> Dict[str, Any]:
         """
         同步运行分析（在线程池中执行）
 
         Args:
             task_id: 任务ID
             pdf_path: PDF文件路径
+            session_id: 会话ID，用于创建会话级分析图
 
         Returns:
             分析结果
         """
         try:
+            # 创建会话级分析图
+            analysis_graph = BiddingAnalysisGraph(session_id=session_id)
+
             # 创建一个自定义的回调来更新进度
             def progress_callback(step: str):
                 self._update_task_status(task_id, TaskStatus.PROCESSING, step)
@@ -180,17 +187,17 @@ class TaskService:
             original_filename = None
             if task_info:
                 file_id = task_info.get("file_id")
-                logger.info(f"获取文件ID: {file_id}")
+                logger.info(f"会话 {session_id}: 获取文件ID: {file_id}")
                 if file_id:
                     file_info = file_service.get_file_info(file_id)
-                    logger.info(f"文件信息: {file_info}")
+                    logger.info(f"会话 {session_id}: 文件信息: {file_info}")
                     if file_info and file_info.get("upload_info"):
                         original_filename = file_info["upload_info"].get("filename")
-                        logger.info(f"获取到原始文件名: {original_filename}")
+                        logger.info(f"会话 {session_id}: 获取到原始文件名: {original_filename}")
 
             # 运行分析，传递进度回调和原始文件名
-            logger.info(f"传递给分析图的原始文件名: {original_filename}")
-            result = self.analysis_graph.run(pdf_path, progress_callback, original_filename)
+            logger.info(f"会话 {session_id}: 开始分析，文件: {original_filename}")
+            result = analysis_graph.run(pdf_path, progress_callback, original_filename)
 
             return result
 

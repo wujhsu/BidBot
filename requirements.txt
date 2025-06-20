@@ -47,6 +47,9 @@ loguru==0.7.3
 # ===== 进度条和用户界面 Progress & UI =====
 tqdm==4.67.1
 
+# ===== 任务调度 Task Scheduling =====
+schedule==1.2.2
+
 # ===== HTTP 客户端 HTTP Clients =====
 requests==2.32.3
 httpx==0.28.1
