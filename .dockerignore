@@ -1,0 +1,58 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# 开发和测试文件
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# 临时文件和缓存
+temp/
+uploads/
+logs/
+output/
+vector_store/
+*.tmp
+*.temp
+
+# 环境配置文件
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# 文档和说明
+README.md
+docs/
+*.md
+
+# 测试文件
+test_documents/
+mytest/
+
+# 图片文件
+*.png
+*.jpg
+*.jpeg
+*.gif
