@@ -14,6 +14,12 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     curl \
+    libreoffice-writer \
+    fonts-wqy-zenhei \
+    fonts-wqy-microhei \
+    fonts-arphic-ukai \
+    fonts-arphic-uming \
+    --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制 requirements.txt

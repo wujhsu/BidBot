@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     
     # LLM提供商选择: 'openai' 或 'dashscope'
     llm_provider: Literal['openai', 'dashscope'] = Field(
-        default='openai',
+        default='dashscope',
         description="LLM提供商选择"
     )
     

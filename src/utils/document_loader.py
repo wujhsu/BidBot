@@ -101,11 +101,15 @@ class UnifiedDocumentConverter:
     def _try_libreoffice_conversion(self, docx_path: str, output_path: str) -> bool:
         """尝试使用LibreOffice转换"""
         try:
+            # 在Docker环境中，LibreOffice需要特殊的环境设置
+            env = os.environ.copy()
+            env['HOME'] = '/tmp'  # 设置临时HOME目录
+
             result = subprocess.run([
                 'libreoffice', '--headless', '--convert-to', 'pdf',
                 '--outdir', os.path.dirname(output_path),
                 docx_path
-            ], capture_output=True, text=True, timeout=30)
+            ], capture_output=True, text=True, timeout=60, env=env)
 
             if result.returncode == 0:
                 # LibreOffice会生成与原文件同名的PDF
@@ -115,7 +119,15 @@ class UnifiedDocumentConverter:
                 if os.path.exists(generated_pdf):
                     # 重命名为我们的临时文件名
                     os.rename(generated_pdf, output_path)
+                    logger.info(f"LibreOffice转换成功: {docx_path} -> {output_path}")
                     return True
+                else:
+                    logger.warning(f"LibreOffice转换完成但未找到输出文件: {generated_pdf}")
+
+            else:
+                logger.warning(f"LibreOffice转换失败，返回码: {result.returncode}")
+                if result.stderr:
+                    logger.warning(f"LibreOffice错误输出: {result.stderr}")
 
             return False
 
