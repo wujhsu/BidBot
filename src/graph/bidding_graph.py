@@ -230,5 +230,24 @@ graph TD
 """
         return mermaid_graph
 
+    def cleanup(self) -> None:
+        """
+        清理分析图资源
+        """
+        try:
+            logger.info(f"会话 {self.session_id}: 开始清理分析图资源...")
+
+            # 清理进度回调
+            self.progress_callback = None
+
+            # 强制垃圾回收
+            import gc
+            gc.collect()
+
+            logger.info(f"会话 {self.session_id}: 分析图资源清理完成")
+
+        except Exception as e:
+            logger.warning(f"会话 {self.session_id}: 清理分析图资源时出错: {e}")
+
 # 创建全局图实例
 bidding_graph = BiddingAnalysisGraph()

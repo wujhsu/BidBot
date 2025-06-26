@@ -84,8 +84,25 @@ async def health_check():
         # 检查LLM连接
         try:
             from src.utils.llm_factory import LLMFactory
-            llm_factory = LLMFactory()
-            dependencies["llm"] = "ok"
+            # 检查API密钥配置
+            if settings.llm_provider == 'dashscope':
+                if not settings.dashscope_api_key:
+                    dependencies["llm"] = "error: 阿里云百炼API密钥未设置"
+                else:
+                    # 尝试创建嵌入模型来验证连接
+                    embeddings = LLMFactory.create_embeddings()
+                    dependencies["llm"] = "ok"
+                    dependencies["llm_provider"] = "dashscope"
+            elif settings.llm_provider == 'openai':
+                if not settings.openai_api_key:
+                    dependencies["llm"] = "error: OpenAI API密钥未设置"
+                else:
+                    # 尝试创建嵌入模型来验证连接
+                    embeddings = LLMFactory.create_embeddings()
+                    dependencies["llm"] = "ok"
+                    dependencies["llm_provider"] = "openai"
+            else:
+                dependencies["llm"] = f"error: 不支持的LLM提供商: {settings.llm_provider}"
         except Exception as e:
             dependencies["llm"] = f"error: {str(e)}"
         

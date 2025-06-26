@@ -26,7 +26,20 @@ class DocumentProcessor:
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap
         )
-        self.embeddings = LLMFactory.create_embeddings()
+
+        # 尝试创建嵌入模型，如果失败则记录错误
+        try:
+            self.embeddings = LLMFactory.create_embeddings()
+            logger.info(f"嵌入模型初始化成功，提供商: {settings.llm_provider}")
+        except Exception as e:
+            logger.error(f"嵌入模型初始化失败: {e}")
+            # 检查API密钥配置
+            if settings.llm_provider == 'dashscope' and not settings.dashscope_api_key:
+                logger.error("阿里云百炼API密钥未设置，请检查DASHSCOPE_API_KEY环境变量")
+            elif settings.llm_provider == 'openai' and not settings.openai_api_key:
+                logger.error("OpenAI API密钥未设置，请检查OPENAI_API_KEY环境变量")
+            raise
+
         self.session_id = session_id
         # 创建会话级向量存储管理器
         self.vector_store_manager = VectorStoreManager(
@@ -75,9 +88,15 @@ class DocumentProcessor:
 
                 try:
                     # 先尝试清空会话的向量存储目录
+                    logger.info(f"会话 {self.session_id}: 开始清理向量存储...")
                     self.vector_store_manager.clear_vector_store()
 
+                    # 强制垃圾回收，确保资源释放
+                    import gc
+                    gc.collect()
+
                     # 创建新的向量存储
+                    logger.info(f"会话 {self.session_id}: 开始创建新的向量存储...")
                     vector_store = self.vector_store_manager.create_vector_store(
                         documents,
                         collection_name=collection_name
@@ -85,16 +104,25 @@ class DocumentProcessor:
                     logger.info(f"会话 {self.session_id}: 创建会话级向量存储成功，文档数量: {len(documents)}")
 
                 except Exception as e:
-                    logger.warning(f"会话 {self.session_id}: 清理向量存储失败，尝试直接创建: {e}")
-                    # 如果清理失败，直接创建新的向量存储
+                    logger.warning(f"会话 {self.session_id}: 清理向量存储失败，尝试强制重新初始化: {e}")
+                    # 如果清理失败，强制重新初始化向量存储管理器
                     try:
+                        # 重新创建嵌入模型和向量存储管理器
+                        logger.info(f"会话 {self.session_id}: 重新初始化向量存储管理器...")
+                        self.embeddings = LLMFactory.create_embeddings()
+                        self.vector_store_manager = VectorStoreManager(
+                            self.embeddings,
+                            session_id=self.session_id
+                        )
+
+                        # 再次尝试创建向量存储
                         vector_store = self.vector_store_manager.create_vector_store(
                             documents,
                             collection_name=collection_name
                         )
-                        logger.info(f"会话 {self.session_id}: 直接创建向量存储成功")
+                        logger.info(f"会话 {self.session_id}: 重新初始化后创建向量存储成功")
                     except Exception as e2:
-                        logger.error(f"会话 {self.session_id}: 创建向量存储也失败: {e2}")
+                        logger.error(f"会话 {self.session_id}: 重新初始化也失败: {e2}")
                         raise e2
 
             else:

@@ -107,14 +107,14 @@ class LLMFactory:
         """创建阿里云通义千问LLM"""
         if not settings.dashscope_api_key:
             raise ValueError("阿里云百炼API密钥未设置")
-        
-        # 设置API密钥
-        dashscope.api_key = settings.dashscope_api_key
-        
+
+        # 不设置全局API密钥，避免状态污染
+        # dashscope.api_key = settings.dashscope_api_key  # 移除全局设置
+
         logger.info(f"创建阿里云通义千问LLM: {settings.dashscope_text_model}")
         return Tongyi(
             model_name=settings.dashscope_text_model,
-            dashscope_api_key=settings.dashscope_api_key,
+            dashscope_api_key=settings.dashscope_api_key,  # 直接传递给实例
             temperature=0.1,
             max_tokens=4000,
         )

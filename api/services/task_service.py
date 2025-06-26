@@ -200,11 +200,42 @@ class TaskService:
             logger.info(f"会话 {session_id}: 开始分析，文件: {original_filename}")
             result = analysis_graph.run(pdf_path, progress_callback, original_filename)
 
+            # 分析完成后，清理资源
+            try:
+                logger.info(f"会话 {session_id}: 分析完成，开始清理资源...")
+                self._cleanup_analysis_resources(analysis_graph, session_id)
+            except Exception as e:
+                logger.warning(f"会话 {session_id}: 资源清理失败（不影响分析结果）: {e}")
+
             return result
 
         except Exception as e:
             logger.error(f"同步分析失败: {e}")
             return {"current_step": "failed", "error_messages": [str(e)]}
+
+    def _cleanup_analysis_resources(self, analysis_graph, session_id: str = None) -> None:
+        """
+        清理分析完成后的资源
+
+        Args:
+            analysis_graph: 分析图实例
+            session_id: 会话ID
+        """
+        try:
+            # 强制垃圾回收
+            import gc
+
+            # 清理分析图中的资源
+            if hasattr(analysis_graph, 'cleanup'):
+                analysis_graph.cleanup()
+
+            # 清理全局状态
+            gc.collect()
+
+            logger.info(f"会话 {session_id}: 资源清理完成")
+
+        except Exception as e:
+            logger.warning(f"会话 {session_id}: 资源清理过程中出错: {e}")
     
     def _update_task_status(self, task_id: str, status: TaskStatus, current_step: str) -> None:
         """

@@ -22,12 +22,31 @@ def main():
 
         logger.info("正在启动智能投标助手 API 服务...")
 
-        # 检查环境
+        # 检查环境和配置
         try:
             from config.settings import settings
+            from config.validation import validate_config_on_startup, test_llm_connection, print_config_summary
+
             logger.info(f"配置加载成功，LLM提供商: {settings.llm_provider}")
+
+            # 打印配置摘要
+            print_config_summary()
+
+            # 验证配置
+            if not validate_config_on_startup():
+                logger.error("配置验证失败，服务无法启动")
+                return
+
+            # 测试LLM连接
+            if not test_llm_connection():
+                logger.error("LLM连接测试失败，服务无法启动")
+                logger.error("请检查API密钥配置和网络连接")
+                return
+
+            logger.info("所有启动前检查通过")
+
         except Exception as e:
-            logger.error(f"配置加载失败: {e}")
+            logger.error(f"启动前检查失败: {e}")
             return
 
         # 创建必要的目录

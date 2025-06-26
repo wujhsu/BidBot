@@ -208,13 +208,36 @@ class VectorStoreManager:
                 try:
                     # 尝试删除集合
                     self.vector_store.delete_collection()
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug(f"删除集合时出错（可忽略）: {e}")
+
+                # 强制关闭Chroma客户端连接
+                try:
+                    if hasattr(self.vector_store, '_client') and self.vector_store._client:
+                        # 尝试关闭客户端连接
+                        if hasattr(self.vector_store._client, 'close'):
+                            self.vector_store._client.close()
+                        elif hasattr(self.vector_store._client, '_client') and hasattr(self.vector_store._client._client, 'close'):
+                            self.vector_store._client._client.close()
+                        self.vector_store._client = None
+
+                    if hasattr(self.vector_store, '_collection'):
+                        self.vector_store._collection = None
+
+                    # 清理其他可能的连接
+                    if hasattr(self.vector_store, '_persist_directory'):
+                        self.vector_store._persist_directory = None
+
+                except Exception as e:
+                    logger.debug(f"清理向量存储对象时出错（可忽略）: {e}")
+
                 self.vector_store = None
 
-            # 等待一下让文件句柄释放
+            # 强制垃圾回收，释放资源
+            import gc
             import time
-            time.sleep(1.0)  # 增加等待时间
+            gc.collect()
+            time.sleep(2.0)  # 增加等待时间，让文件句柄完全释放
 
             # 对于会话级目录，采用更安全的清理策略
             if self.session_id and os.path.exists(self.persist_directory):
@@ -285,10 +308,15 @@ class VectorStoreManager:
         """安全清空目录内容（处理Windows文件锁定问题）"""
         import time
         import gc
+        import platform
 
         # 强制垃圾回收，释放可能的文件句柄
         gc.collect()
-        time.sleep(0.5)
+        time.sleep(1.0)  # 增加等待时间
+
+        # Windows系统特殊处理
+        if platform.system() == "Windows":
+            self._windows_force_unlock_files(directory)
 
         max_retries = 5
         for attempt in range(max_retries):
@@ -334,6 +362,28 @@ class VectorStoreManager:
         remaining = os.listdir(directory)
         if remaining:
             raise OSError(f"无法完全清空目录，剩余 {len(remaining)} 个项目")
+
+    def _windows_force_unlock_files(self, directory: str) -> None:
+        """Windows系统强制解锁文件"""
+        try:
+            import time
+
+            # 查找可能锁定文件的进程
+            for item in os.listdir(directory):
+                item_path = os.path.join(directory, item)
+                if item.endswith('.sqlite3') or item.endswith('.db'):
+                    try:
+                        # 尝试重命名文件来解锁
+                        temp_name = f"{item_path}.temp_{int(time.time())}"
+                        os.rename(item_path, temp_name)
+                        time.sleep(0.1)
+                        os.remove(temp_name)
+                        logger.debug(f"成功解锁并删除文件: {item}")
+                    except Exception as e:
+                        logger.debug(f"无法解锁文件 {item}: {e}")
+
+        except Exception as e:
+            logger.debug(f"Windows文件解锁失败: {e}")
 
     def _force_remove_directory(self, dir_path: str) -> None:
         """强制删除目录"""
