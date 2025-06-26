@@ -4,6 +4,7 @@ File Service Router
 """
 
 import os
+import urllib.parse
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -58,13 +59,16 @@ async def get_pdf_file(file_id: str):
             original_filename = f"{original_name}.pdf"
         
         # 返回文件响应
+        # 对文件名进行URL编码以支持中文字符
+        encoded_filename = urllib.parse.quote(original_filename.encode('utf-8'))
+
         return FileResponse(
             path=pdf_path,
             media_type="application/pdf",
             filename=original_filename,
             headers={
                 "Cache-Control": "public, max-age=3600",  # 缓存1小时
-                "Content-Disposition": f"inline; filename=\"{original_filename}\""
+                "Content-Disposition": f"inline; filename*=UTF-8''{encoded_filename}"
             }
         )
         
@@ -131,12 +135,15 @@ async def download_file(file_id: str, file_type: str = "pdf"):
         media_type = media_type_mapping.get(file_extension, "application/octet-stream")
         
         # 返回文件下载响应
+        # 对文件名进行URL编码以支持中文字符
+        encoded_filename = urllib.parse.quote(filename.encode('utf-8'))
+
         return FileResponse(
             path=file_path,
             media_type=media_type,
             filename=filename,
             headers={
-                "Content-Disposition": f"attachment; filename=\"{filename}\""
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
             }
         )
         
