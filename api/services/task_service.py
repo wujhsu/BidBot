@@ -4,6 +4,7 @@ Asynchronous Task Processing Service
 """
 
 import asyncio
+import os
 import uuid
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
@@ -228,6 +229,25 @@ class TaskService:
             # 清理分析图中的资源
             if hasattr(analysis_graph, 'cleanup'):
                 analysis_graph.cleanup()
+
+            # 清理会话级向量存储（延迟清理，避免立即重用时出错）
+            if session_id:
+                try:
+                    # 标记会话为已完成，但不立即删除向量存储
+                    # 这样可以避免用户快速返回首页重新分析时的数据库错误
+                    session_vector_dir = os.path.join("./vector_store", session_id)
+                    if os.path.exists(session_vector_dir):
+                        # 创建一个标记文件，表示这个会话已完成
+                        import time
+                        completion_marker = os.path.join(session_vector_dir, f".completed_{int(time.time())}")
+                        try:
+                            with open(completion_marker, 'w') as f:
+                                f.write(f"Session {session_id} completed at {time.time()}")
+                            logger.debug(f"会话 {session_id}: 创建完成标记文件")
+                        except Exception as e:
+                            logger.debug(f"会话 {session_id}: 创建完成标记文件失败: {e}")
+                except Exception as e:
+                    logger.debug(f"会话 {session_id}: 处理会话完成标记时出错: {e}")
 
             # 清理全局状态
             gc.collect()

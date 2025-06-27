@@ -42,17 +42,17 @@ class VectorStoreManager:
     def create_vector_store(self, documents: List[Document], collection_name: str = "bidding_docs") -> Chroma:
         """
         创建向量存储
-        
+
         Args:
             documents: 文档列表
             collection_name: 集合名称
-            
+
         Returns:
             Chroma: 向量存储实例
         """
         try:
             logger.info(f"开始创建向量存储，文档数量: {len(documents)}")
-            
+
             # 创建向量存储
             self.vector_store = Chroma.from_documents(
                 documents=documents,
@@ -60,12 +60,35 @@ class VectorStoreManager:
                 persist_directory=self.persist_directory,
                 collection_name=collection_name
             )
-            
+
             logger.info(f"向量存储创建成功，集合名称: {collection_name}")
             return self.vector_store
-            
+
         except Exception as e:
             logger.error(f"创建向量存储失败: {e}")
+
+            # 如果是数据库相关错误，尝试清理并重新创建
+            if "no such table" in str(e).lower() or "database" in str(e).lower():
+                logger.warning(f"检测到数据库错误，尝试清理并重新创建向量存储: {e}")
+                try:
+                    # 强制清理向量存储目录
+                    self._force_cleanup_vector_store()
+
+                    # 重新创建向量存储
+                    self.vector_store = Chroma.from_documents(
+                        documents=documents,
+                        embedding=self.embeddings,
+                        persist_directory=self.persist_directory,
+                        collection_name=collection_name
+                    )
+
+                    logger.info(f"重新创建向量存储成功，集合名称: {collection_name}")
+                    return self.vector_store
+
+                except Exception as e2:
+                    logger.error(f"重新创建向量存储也失败: {e2}")
+                    raise e2
+
             raise
     
     def load_vector_store(self, collection_name: str = "bidding_docs") -> Optional[Chroma]:
@@ -428,6 +451,71 @@ class VectorStoreManager:
             # 如果单独清空集合失败，可以选择清空整个向量存储
             logger.info("尝试清空整个向量存储...")
             self.clear_vector_store()
+
+    def _force_cleanup_vector_store(self) -> None:
+        """
+        强制清理向量存储目录，用于处理数据库损坏的情况
+        """
+        try:
+            if os.path.exists(self.persist_directory):
+                logger.info(f"强制清理向量存储目录: {self.persist_directory}")
+
+                # 强制删除所有文件
+                import shutil
+                import time
+
+                # 多次尝试删除，处理文件锁定问题
+                max_retries = 5
+                for attempt in range(max_retries):
+                    try:
+                        # 先尝试删除所有内容
+                        for item in os.listdir(self.persist_directory):
+                            item_path = os.path.join(self.persist_directory, item)
+                            if os.path.isdir(item_path):
+                                shutil.rmtree(item_path, ignore_errors=True)
+                            else:
+                                try:
+                                    os.chmod(item_path, 0o777)
+                                    os.remove(item_path)
+                                except:
+                                    pass
+
+                        # 检查是否清理完成
+                        remaining = os.listdir(self.persist_directory)
+                        if not remaining:
+                            logger.info("强制清理向量存储目录成功")
+                            break
+                        else:
+                            logger.warning(f"尝试 {attempt + 1}: 仍有 {len(remaining)} 个项目未删除")
+
+                    except Exception as e:
+                        logger.warning(f"强制清理尝试 {attempt + 1} 失败: {e}")
+
+                    if attempt < max_retries - 1:
+                        time.sleep(1.0)
+
+                # 如果还有剩余文件，创建新的子目录
+                remaining = os.listdir(self.persist_directory)
+                if remaining:
+                    logger.warning(f"无法完全清理目录，创建新的子目录")
+                    import uuid
+                    new_subdir = os.path.join(self.persist_directory, f"clean_{uuid.uuid4().hex[:8]}")
+                    os.makedirs(new_subdir, exist_ok=True)
+                    self.persist_directory = new_subdir
+                    logger.info(f"使用新的向量存储目录: {new_subdir}")
+
+        except Exception as e:
+            logger.error(f"强制清理向量存储失败: {e}")
+            # 创建备用目录
+            try:
+                import uuid
+                backup_dir = os.path.join(os.path.dirname(self.persist_directory), f"backup_{uuid.uuid4().hex[:8]}")
+                os.makedirs(backup_dir, exist_ok=True)
+                self.persist_directory = backup_dir
+                logger.info(f"使用备用向量存储目录: {backup_dir}")
+            except Exception as e2:
+                logger.error(f"创建备用目录也失败: {e2}")
+                raise e
 
     def create_isolated_vector_store(self, documents: List[Document], document_path: str) -> Chroma:
         """

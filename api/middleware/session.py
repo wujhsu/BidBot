@@ -27,15 +27,21 @@ class SessionMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         """处理请求，添加会话隔离"""
-        
+
         # 从请求头获取会话ID
         session_id = self._extract_session_id(request)
-        
-        if not session_id:
-            # 如果没有会话ID，生成一个新的
+
+        # 检查是否需要强制生成新会话ID（用于处理会话重置）
+        force_new_session = request.headers.get("X-Force-New-Session", "").lower() == "true"
+
+        if not session_id or force_new_session:
+            # 如果没有会话ID或强制要求新会话，生成一个新的
             session_id = self._generate_session_id()
-            logger.info(f"生成新会话ID: {session_id}")
-        
+            if force_new_session:
+                logger.info(f"强制生成新会话ID: {session_id}")
+            else:
+                logger.info(f"生成新会话ID: {session_id}")
+
         # 验证会话ID格式
         if not self._validate_session_id(session_id):
             raise HTTPException(

@@ -110,9 +110,16 @@ class DocumentProcessor:
                         # 重新创建嵌入模型和向量存储管理器
                         logger.info(f"会话 {self.session_id}: 重新初始化向量存储管理器...")
                         self.embeddings = LLMFactory.create_embeddings()
+
+                        # 创建新的向量存储管理器，使用新的目录
+                        import uuid
+                        import time
+                        timestamp = int(time.time())
+                        new_session_suffix = f"{self.session_id}_retry_{uuid.uuid4().hex[:8]}_{timestamp}"
+
                         self.vector_store_manager = VectorStoreManager(
                             self.embeddings,
-                            session_id=self.session_id
+                            session_id=new_session_suffix
                         )
 
                         # 再次尝试创建向量存储
@@ -120,10 +127,28 @@ class DocumentProcessor:
                             documents,
                             collection_name=collection_name
                         )
-                        logger.info(f"会话 {self.session_id}: 重新初始化后创建向量存储成功")
+                        logger.info(f"会话 {self.session_id}: 重新初始化后创建向量存储成功，使用新目录: {new_session_suffix}")
                     except Exception as e2:
                         logger.error(f"会话 {self.session_id}: 重新初始化也失败: {e2}")
-                        raise e2
+                        # 最后的备用方案：使用临时目录
+                        try:
+                            logger.info(f"会话 {self.session_id}: 尝试使用临时目录作为最后备用方案...")
+                            import tempfile
+                            temp_dir = tempfile.mkdtemp(prefix=f"vector_store_{self.session_id}_")
+
+                            self.vector_store_manager = VectorStoreManager(
+                                self.embeddings,
+                                persist_directory=temp_dir
+                            )
+
+                            vector_store = self.vector_store_manager.create_vector_store(
+                                documents,
+                                collection_name=collection_name
+                            )
+                            logger.info(f"会话 {self.session_id}: 使用临时目录创建向量存储成功: {temp_dir}")
+                        except Exception as e3:
+                            logger.error(f"会话 {self.session_id}: 所有重试方案都失败: {e3}")
+                            raise e3
 
             else:
                 # 兼容模式：如果没有会话ID，使用传统方式
